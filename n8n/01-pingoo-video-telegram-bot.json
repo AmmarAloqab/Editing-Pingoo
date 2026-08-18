@@ -1,0 +1,105 @@
+{
+  "updatedAt": "2026-08-18T09:01:14.138656Z",
+  "createdAt": "2026-08-18T09:01:14.138656Z",
+  "id": "KVK9YFvSdisM0fsN",
+  "name": "01 - Pingoo Video Telegram Bot",
+  "description": "Telegram command entry point for Editing-Pingoo",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "d69eeeff-8c24-41ff-a4e7-0f0ff151d48e",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Pingoo Video Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst m = $json.message ?? {};\nconst text = (m.text ?? '').trim();\nconst command = text.split(/\\s+/)[0].split('@')[0].toLowerCase();\n\nconst replies = {\n  '/start': `🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`,\n\n  '/video': `🎬 أرسل موضوع الفيديو بعد الأمر، مثال:\n/video أفضل الأماكن السياحية في السعودية`,\n\n  '/status': `📊 سيتم عرض حالة آخر مهمة هنا.`,\n\n  '/history': `📚 سيتم عرض الفيديوهات السابقة هنا.`,\n\n  '/settings': `⚙️ سيتم حفظ إعدادات اللغة والصوت والمقاس هنا.`,\n\n  '/cancel': `❌ سيتم ربط الإلغاء بالمهمة النشطة.`\n};\n\nreturn [{\n  json: {\n    chat_id: m.chat?.id,\n    telegram_id: m.from?.id,\n    username: m.from?.username ?? '',\n    first_name: m.from?.first_name ?? '',\n    command,\n    original_text: text,\n    reply: replies[command] ?? 'استخدم /start لعرض الأوامر'\n  }\n}];\n"
+      },
+      "id": "1e9908eb-6ef9-42ac-9ea7-fb9ec1a1bf34",
+      "name": "Command Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {}
+      },
+      "id": "f9cacb7d-b5ed-4434-a41a-23d4a314ee6e",
+      "name": "Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Pingoo Video Telegram"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Command Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command Router": {
+      "main": [
+        [
+          {
+            "node": "Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "0be620a2-a0f3-4d6b-8248-7ce821475e05",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "tags": []
+}
