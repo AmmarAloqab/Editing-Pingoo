@@ -1,6 +1,7 @@
 x-common-volumes: &common-volumes
   - ./config.toml:/MoneyPrinterTurbo/config.toml
   - ./storage:/MoneyPrinterTurbo/storage
+  - ./app/services/llm.py:/MoneyPrinterTurbo/app/services/llm.py:ro
 
 services:
   webui:
