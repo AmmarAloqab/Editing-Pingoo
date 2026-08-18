@@ -380,14 +380,23 @@ def _generate_response(prompt: str, app_config=None) -> str:
             else:
                 raise Exception(f"[{llm_provider}] returned an empty response")
 
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        client_kwargs = {
+            "api_key": api_key,
+            "base_url": base_url,
+        }
+        if llm_provider == "ollama":
+            client_kwargs["timeout"] = 180.0
 
-        response = client.chat.completions.create(
-            model=model_name, messages=[{"role": "user", "content": prompt}]
-        )
+        client = OpenAI(**client_kwargs)
+
+        completion_kwargs = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if llm_provider == "ollama":
+            completion_kwargs["extra_body"] = {"reasoning_effort": "none"}
+
+        response = client.chat.completions.create(**completion_kwargs)
         if response:
             if isinstance(response, ChatCompletion):
                 return _extract_chat_completion_text(response, llm_provider)
