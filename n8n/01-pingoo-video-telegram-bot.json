@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T19:09:10.956026Z",
+  "updatedAt": "2026-08-18T19:23:30.997025Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -224,31 +224,36 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst ctx =\n  $items('Video Gate')[0]?.json || {};\n\nconst created =\n  $items('Create MoneyPrinterTurbo Task')[0]?.json || {};\n\nconst taskId =\n  created?.data?.task_id ||\n  created?.task_id ||\n  $json?.task_id;\n\nif (!taskId) {\n  throw new Error(\n    'AUTO_POLL_TASK_ID_NOT_FOUND'\n  );\n}\n\nreturn [{\n  json:{\n    chat_id: ctx.chat_id,\n    telegram_id: ctx.telegram_id,\n    video_subject: ctx.video_subject,\n    task_id: taskId,\n    poll_started_at: Date.now()\n  }\n}];\n"
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
       },
-      "id": "1591ad54-6c69-42e5-933c-51f818440f8f",
-      "name": "Prepare Auto Poll",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "ce8c88d0-6ca4-4003-984a-513f175364ef",
+      "name": "Auto Poll Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
       "position": [
-        1540,
-        420
+        1500,
+        620
       ]
     },
     {
       "parameters": {
-        "amount": 20,
-        "unit": "seconds"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nconst jobs=\n  Array.isArray(store.jobs)\n    ? store.jobs\n    : [];\n\nconst pending=jobs\n  .filter(j =>\n    j.task_id &&\n    (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status\n    )\n  )\n  .slice(0,20);\n\nreturn pending.map(j => ({\n  json:{\n    task_id:j.task_id,\n    chat_id:j.chat_id,\n    telegram_id:j.telegram_id,\n    video_subject:j.topic,\n    created_at:j.created_at\n  }\n}));\n"
       },
-      "id": "4f9d85b1-f197-4ed8-8126-949a14685d97",
-      "name": "Poll Wait",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
+      "id": "299bf6fd-30d3-4810-bd14-0271204f2a8a",
+      "name": "Load Pending Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1780,
-        420
-      ],
-      "webhookId": "9305349e-d755-448f-ae9b-0b5a971f879d"
+        1740,
+        620
+      ]
     },
     {
       "parameters": {
@@ -257,65 +262,39 @@
           "timeout": 30000
         }
       },
-      "id": "9a387372-a666-4802-9a76-ce6bd8d61296",
-      "name": "Get Automatic Task Status",
+      "id": "2fe2e64c-f16c-489d-b0ed-5cce4508feec",
+      "name": "Get Scheduled Task Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        2020,
-        420
+        1980,
+        620
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst ctx =\n  $items('Prepare Auto Poll')[0]?.json;\n\nif (!ctx) {\n  throw new Error(\n    'AUTO_POLL_CONTEXT_NOT_FOUND'\n  );\n}\n\nconst payload=$json?.data;\n\nif (!payload) {\n  throw new Error(\n    'AUTO_POLL_INVALID_API_RESPONSE: ' +\n    JSON.stringify($json)\n  );\n}\n\n\nconst progress =\n  Number(payload.progress || 0);\n\n\nlet status='processing';\n\n\nif (\n  payload.state === -1 ||\n  payload.failed_stage ||\n  payload.error\n) {\n  status='failed';\n}\n\n\nconst hasVideos =\n  (\n    Array.isArray(payload.videos) &&\n    payload.videos.length > 0\n  ) ||\n  (\n    Array.isArray(payload.combined_videos) &&\n    payload.combined_videos.length > 0\n  );\n\n\nif (\n  progress >= 100 ||\n  hasVideos\n) {\n  status='completed';\n}\n\n\nconst elapsed =\n  Date.now() -\n  Number(ctx.poll_started_at || Date.now());\n\n\nif (\n  status === 'processing' &&\n  elapsed >= 20 * 60 * 1000\n) {\n  status='timeout';\n}\n\n\nconst store =\n  $getWorkflowStaticData('global');\n\nif (!store.jobs) {\n  store.jobs=[];\n}\n\nif (!store.auto_poll_seen) {\n  store.auto_poll_seen={};\n}\n\n\nconst firstPoll =\n  !store.auto_poll_seen[ctx.task_id];\n\nstore.auto_poll_seen[ctx.task_id]=true;\n\n\nconst index =\n  store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n\nif (index >= 0) {\n  store.jobs[index]={\n    ...store.jobs[index],\n\n    status,\n    progress,\n    state:payload.state,\n\n    failed_stage:\n      payload.failed_stage ?? null,\n\n    error:\n      payload.error ?? null,\n\n    videos:\n      payload.videos ?? null,\n\n    combined_videos:\n      payload.combined_videos ?? null,\n\n    last_polled_at:\n      new Date().toISOString()\n  };\n}\n\n\nreturn [{\n  json:{\n    ...ctx,\n\n    progress,\n    status,\n    state:payload.state,\n\n    failed_stage:\n      payload.failed_stage ?? null,\n\n    error:\n      payload.error ?? null,\n\n    videos:\n      payload.videos ?? null,\n\n    combined_videos:\n      payload.combined_videos ?? null,\n\n    poll_action:\n      status === 'processing'\n        ? 'continue'\n        : 'stop',\n\n    first_poll:firstPoll,\n\n    poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n  }\n}];\n"
+        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const payload=responses[i]?.json?.data;\n\n  if (!ctx || !payload) {\n    continue;\n  }\n\n  const progress=Number(payload.progress || 0);\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos =\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
       },
-      "id": "4d4d189f-b30f-4174-b08d-64d800859d81",
-      "name": "Evaluate Automatic Poll",
+      "id": "f0d86aa5-db72-4243-a7b8-b694b58eef51",
+      "name": "Update Scheduled Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2260,
-        420
+        2220,
+        620
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nif ($json.poll_action !== 'continue') {\n  return [];\n}\n\nreturn items;\n"
+        "jsCode": "\nreturn $input.all().filter(\n  item => item.json.send_notice === true\n);\n"
       },
-      "id": "bad684c1-f8bf-465c-8ec6-57396e4523b7",
-      "name": "Poll Continue Gate",
+      "id": "c18e4788-8172-4af8-9fb3-6823834a6aab",
+      "name": "Scheduled Poll Notice Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2500,
-        340
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nif ($json.poll_action !== 'stop') {\n  return [];\n}\n\nreturn items;\n"
-      },
-      "id": "2686ce4c-4a4c-4dde-aa82-4251be2be41e",
-      "name": "Poll Stop Gate",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2500,
-        520
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nif (!$json.first_poll) {\n  return [];\n}\n\nreturn items;\n"
-      },
-      "id": "0a5b77f9-2bf6-449e-95f7-e23f89b61015",
-      "name": "Poll First Notice Gate",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2500,
-        680
+        2460,
+        620
       ]
     },
     {
@@ -326,13 +305,13 @@
         "text": "={{ $json.poll_notice }}",
         "additionalFields": {}
       },
-      "id": "fc946075-4241-4494-9de2-81a70a1c569e",
+      "id": "29431bd1-f225-4119-9061-805f0a7b8954",
       "name": "Telegram Poll Proof",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2740,
-        680
+        2700,
+        620
       ],
       "credentials": {
         "telegramApi": {
@@ -404,11 +383,6 @@
             "node": "Telegram Task Created",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Prepare Auto Poll",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -468,77 +442,51 @@
         ]
       ]
     },
-    "Prepare Auto Poll": {
+    "Auto Poll Schedule": {
       "main": [
         [
           {
-            "node": "Poll Wait",
+            "node": "Load Pending Jobs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Poll Wait": {
+    "Load Pending Jobs": {
       "main": [
         [
           {
-            "node": "Get Automatic Task Status",
+            "node": "Get Scheduled Task Status",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Automatic Task Status": {
+    "Get Scheduled Task Status": {
       "main": [
         [
           {
-            "node": "Evaluate Automatic Poll",
+            "node": "Update Scheduled Status",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Evaluate Automatic Poll": {
+    "Update Scheduled Status": {
       "main": [
         [
           {
-            "node": "Poll Continue Gate",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Poll Stop Gate",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Poll First Notice Gate",
+            "node": "Scheduled Poll Notice Gate",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Poll Continue Gate": {
-      "main": [
-        [
-          {
-            "node": "Poll Wait",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Poll Stop Gate": {
-      "main": [
-        []
-      ]
-    },
-    "Poll First Notice Gate": {
+    "Scheduled Poll Notice Gate": {
       "main": [
         [
           {
@@ -547,11 +495,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "Telegram Poll Proof": {
-      "main": [
-        []
       ]
     }
   },
@@ -570,9 +513,9 @@
           "language": "ar-SA",
           "voice": "ar-SA-HamedNeural",
           "video_aspect": "9:16",
-          "awaiting": null,
+          "awaiting": "video_topic",
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-18T18:53:04.172Z"
+          "last_seen_at": "2026-08-18T19:15:08.912Z"
         }
       },
       "jobs": [
@@ -581,16 +524,20 @@
           "chat_id": 492998632,
           "task_id": "2a276b1f-e145-4e90-9848-9eb17fb5e237",
           "topic": "فوائد المشي يومياً",
-          "status": "processing",
-          "progress": 50,
+          "status": "completed",
+          "progress": 100,
           "created_at": "2026-08-18T18:50:27.246Z",
-          "state": 4,
+          "state": 1,
           "failed_stage": null,
           "error": null,
-          "videos": null,
-          "combined_videos": null,
-          "audio_file": null,
-          "updated_at": "2026-08-18T18:53:06.378Z"
+          "videos": [
+            "/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/combined-1.mp4"
+          ],
+          "audio_file": "/MoneyPrinterTurbo/storage/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/audio.mp3",
+          "updated_at": "2026-08-18T19:13:40.977Z"
         },
         {
           "telegram_id": "492998632",
@@ -624,9 +571,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "d858e254-448c-40f0-aa5c-d986aae9ee26",
+  "versionId": "85fe4b7b-8888-40ad-8c7f-ca5e332ed5b6",
   "activeVersionId": null,
-  "versionCounter": 44,
+  "versionCounter": 50,
   "triggerCount": 1,
   "tags": []
 }
