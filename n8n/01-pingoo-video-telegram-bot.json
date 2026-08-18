@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T18:04:26.223070Z",
+  "updatedAt": "2026-08-18T18:27:15.999070Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst store = $getWorkflowStaticData('global');\n\nif (!store.users) store.users = {};\nif (!store.jobs) store.jobs = [];\n\nconst m = $json.message ?? {};\nconst text = (m.text ?? '').trim();\n\nconst chatId = m.chat?.id;\nconst telegramId = String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId] = {\n    telegram_id: telegramId,\n    chat_id: chatId,\n    username: m.from?.username ?? '',\n    first_name: m.from?.first_name ?? '',\n    language: 'ar-SA',\n    voice: 'ar-SA-HamedNeural',\n    video_aspect: '9:16',\n    awaiting: null,\n    created_at: new Date().toISOString()\n  };\n}\n\nconst user = store.users[telegramId];\n\nuser.chat_id = chatId;\nuser.username = m.from?.username ?? user.username ?? '';\nuser.first_name = m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at = new Date().toISOString();\n\nlet command = '';\nif (text.startsWith('/')) {\n  command = text.split(/\\s+/)[0].split('@')[0].toLowerCase();\n}\n\nlet route = 'reply';\nlet reply = '';\nlet videoSubject = '';\n\nif (command === '/start') {\n\n  user.awaiting = null;\n\n  reply =\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n} else if (command === '/video') {\n\n  videoSubject = text\n    .replace(/^\\/video(?:@\\w+)?/i, '')\n    .trim();\n\n  if (!videoSubject) {\n    user.awaiting = 'video_topic';\n\n    reply =\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nأفضل 5 أماكن سياحية في السعودية`;\n\n  } else {\n    user.awaiting = null;\n    route = 'video';\n\n    reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري إنشاء المهمة...`;\n  }\n\n} else if (!command && user.awaiting === 'video_topic' && text) {\n\n  videoSubject = text;\n  user.awaiting = null;\n  route = 'video';\n\n  reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري إنشاء المهمة...`;\n\n} else if (command === '/status') {\n\n  const job = store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n    reply = '📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n  } else {\n    reply =\n`📊 آخر مهمة\n\nالموضوع: ${job.topic}\nTask ID: ${job.task_id}\nالحالة: ${job.status}\nالتقدم: ${job.progress ?? 0}%`;\n  }\n\n} else if (command === '/history') {\n\n  const jobs = store.jobs\n    .filter(j => String(j.telegram_id) === telegramId)\n    .slice(0,5);\n\n  if (!jobs.length) {\n    reply = '📚 السجل فارغ.';\n  } else {\n    reply =\n      '📚 آخر المهام\\n\\n' +\n      jobs.map((j,i) =>\n        `${i+1}. ${j.topic}\\n${j.task_id}\\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply =\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting = null;\n\n  reply =\n`❌ تم إلغاء أي طلب إدخال غير مكتمل.\n\nإلغاء مهمة معالجة فعلية سيتم ربطه في مرحلة /cancel.`;\n\n} else {\n\n  reply =\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: telegramId,\n    username: user.username,\n    command,\n    route,\n    video_subject: videoSubject,\n    video_language: user.language,\n    voice_name: user.voice,\n    video_aspect: user.video_aspect,\n    reply\n  }\n}];\n"
+        "jsCode": "\nconst store = $getWorkflowStaticData('global');\n\nif (!store.users) store.users = {};\nif (!store.jobs) store.jobs = [];\n\nconst m = $json.message ?? {};\nconst text = (m.text ?? '').trim();\n\nconst chatId = m.chat?.id;\nconst telegramId = String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId] = {\n    telegram_id: telegramId,\n    chat_id: chatId,\n    username: m.from?.username ?? '',\n    first_name: m.from?.first_name ?? '',\n    language: 'ar-SA',\n    voice: 'ar-SA-HamedNeural',\n    video_aspect: '9:16',\n    awaiting: null,\n    created_at: new Date().toISOString()\n  };\n}\n\nconst user = store.users[telegramId];\n\nuser.chat_id = chatId;\nuser.username = m.from?.username ?? user.username ?? '';\nuser.first_name = m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at = new Date().toISOString();\n\nlet command = '';\n\nif (text.startsWith('/')) {\n  command = text\n    .split(/\\s+/)[0]\n    .split('@')[0]\n    .toLowerCase();\n}\n\nlet route = 'reply';\nlet reply = '';\nlet videoSubject = '';\nlet taskId = '';\n\nif (command === '/start') {\n\n  user.awaiting = null;\n\n  reply =\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n} else if (command === '/video') {\n\n  videoSubject = text\n    .replace(/^\\/video(?:@\\w+)?/i, '')\n    .trim();\n\n  if (!videoSubject) {\n\n    user.awaiting = 'video_topic';\n\n    reply =\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nأفضل 5 أماكن سياحية في السعودية`;\n\n  } else {\n\n    user.awaiting = null;\n    route = 'video';\n\n    reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'video_topic' &&\n  text\n) {\n\n  videoSubject = text;\n  user.awaiting = null;\n  route = 'video';\n\n  reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n\n} else if (command === '/status') {\n\n  const job = store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n\n    reply = '📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n\n  } else {\n\n    route = 'status';\n    taskId = job.task_id;\n  }\n\n} else if (command === '/history') {\n\n  const jobs = store.jobs\n    .filter(j => String(j.telegram_id) === telegramId)\n    .slice(0,5);\n\n  if (!jobs.length) {\n\n    reply = '📚 السجل فارغ.';\n\n  } else {\n\n    reply =\n      '📚 آخر المهام\\n\\n' +\n      jobs.map((j,i) =>\n        `${i+1}. ${j.topic}\\n${j.task_id}\\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply =\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting = null;\n\n  reply = '❌ تم إلغاء أي طلب إدخال غير مكتمل.';\n\n} else {\n\n  reply =\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: telegramId,\n    username: user.username,\n    command,\n    route,\n    task_id: taskId,\n    video_subject: videoSubject,\n    video_language: user.language,\n    voice_name: user.voice,\n    video_aspect: user.video_aspect,\n    reply\n  }\n}];\n"
       },
       "id": "1e9908eb-6ef9-42ac-9ea7-fb9ec1a1bf34",
       "name": "Command Router",
@@ -165,6 +165,82 @@
         1040,
         180
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif ($json.route === 'status') {\n  return [];\n}\n\nreturn items;\n"
+      },
+      "id": "854228e0-20be-4d99-9292-a97aa2c1bb90",
+      "name": "Immediate Reply Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif (\n  $json.route !== 'status' ||\n  !$json.task_id\n) {\n  return [];\n}\n\nreturn items;\n"
+      },
+      "id": "17372f5e-67d8-4e67-a22b-61885375384f",
+      "name": "Status Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://moneyprinterturbo-api:8080/api/v1/tasks/{{$json.task_id}}",
+        "options": {}
+      },
+      "id": "777bc2af-0e0c-473a-b9e9-3976910e6d4e",
+      "name": "Get Real Task Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        780,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctxItems = $items('Status Gate');\n\nif (!ctxItems.length) {\n  throw new Error('STATUS_CONTEXT_NOT_FOUND');\n}\n\nconst ctx = ctxItems[0].json;\n\nconst payload = $json?.data;\n\nif (!payload) {\n  throw new Error(\n    'INVALID_STATUS_RESPONSE: ' +\n    JSON.stringify($json)\n  );\n}\n\nconst store = $getWorkflowStaticData('global');\n\nif (!store.jobs) {\n  store.jobs = [];\n}\n\nconst index = store.jobs.findIndex(\n  j =>\n    String(j.telegram_id) === String(ctx.telegram_id) &&\n    j.task_id === ctx.task_id\n);\n\nlet status = 'processing';\n\nif (\n  payload.state === -1 ||\n  payload.failed_stage ||\n  payload.error\n) {\n  status = 'failed';\n} else if (\n  Number(payload.progress || 0) >= 100\n) {\n  status = 'completed';\n}\n\nif (index >= 0) {\n  store.jobs[index] = {\n    ...store.jobs[index],\n    status,\n    state: payload.state,\n    progress: Number(payload.progress || 0),\n    failed_stage: payload.failed_stage ?? null,\n    error: payload.error ?? null,\n    videos: payload.videos ?? null,\n    combined_videos: payload.combined_videos ?? null,\n    audio_file: payload.audio_file ?? null,\n    updated_at: new Date().toISOString()\n  };\n}\n\nlet message =\n`📊 حالة الفيديو\n\n🎬 الموضوع:\n${index >= 0 ? store.jobs[index].topic : ''}\n\n🆔 Task ID:\n${ctx.task_id}\n\n📈 التقدم:\n${payload.progress ?? 0}%\n\n⚙️ الحالة:\n${status}`;\n\nif (payload.failed_stage) {\n  message += `\n\n❌ مرحلة الفشل:\n${payload.failed_stage}`;\n}\n\nif (payload.error) {\n  message += `\n\n⚠️ الخطأ:\n${payload.error}`;\n}\n\nif (status === 'completed') {\n  message += `\n\n✅ الفيديو مكتمل`;\n}\n\nreturn [{\n  json:{\n    chat_id:ctx.chat_id,\n    telegram_id:ctx.telegram_id,\n    task_id:ctx.task_id,\n    real_status:status,\n    progress:Number(payload.progress || 0),\n    state:payload.state,\n    status_reply:message\n  }\n}];\n"
+      },
+      "id": "2d0d3f64-3ce2-4687-a2b9-0d97c49a4ada",
+      "name": "Save Real Task Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.status_reply }}",
+        "additionalFields": {}
+      },
+      "id": "a4f77b66-cc72-44ae-ba8e-983498014e37",
+      "name": "Telegram Real Status",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        360
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "WCESKUGL4NBFdR0W",
+          "name": "Pingoo Video Telegram"
+        }
+      }
     }
   ],
   "connections": {
@@ -183,12 +259,17 @@
       "main": [
         [
           {
-            "node": "Telegram Reply",
+            "node": "Immediate Reply Gate",
             "type": "main",
             "index": 0
           },
           {
             "node": "Video Gate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Status Gate",
             "type": "main",
             "index": 0
           }
@@ -249,6 +330,50 @@
           }
         ]
       ]
+    },
+    "Immediate Reply Gate": {
+      "main": [
+        [
+          {
+            "node": "Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Gate": {
+      "main": [
+        [
+          {
+            "node": "Get Real Task Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Real Task Status": {
+      "main": [
+        [
+          {
+            "node": "Save Real Task Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Real Task Status": {
+      "main": [
+        [
+          {
+            "node": "Telegram Real Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -304,9 +429,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "4c4d87cd-d04c-4e29-9fba-a421a8f8388e",
+  "versionId": "b1e7df7d-ff9e-4edd-a3b3-d9551b19e8c0",
   "activeVersionId": null,
-  "versionCounter": 25,
+  "versionCounter": 28,
   "triggerCount": 1,
   "tags": []
 }
