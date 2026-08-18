@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T18:27:15.999070Z",
+  "updatedAt": "2026-08-18T18:46:55.612792Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -85,7 +85,7 @@
         "url": "http://moneyprinterturbo-api:8080/api/v1/videos",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n  video_terms: $json.video_terms,\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n  video_count: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n\n  video_source: \"local\",\n\n  video_materials: [\n    {\n      provider: \"local\",\n      url: \"/MoneyPrinterTurbo/storage/local_videos/pingoo-test.mp4\",\n      duration: 0\n    }\n  ],\n\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
         "options": {}
       },
       "id": "3ed2f40d-0e15-4229-aa39-b55b8c69b481",
@@ -93,7 +93,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1300,
+        1040,
         180
       ]
     },
@@ -106,7 +106,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1560,
+        1300,
         180
       ]
     },
@@ -132,39 +132,6 @@
           "name": "Pingoo Video Telegram"
         }
       }
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://pingoo-ollama:11434/api/chat",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: \"qwen3:0.6b\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"أنت كاتب فيديوهات قصيرة. أرجع JSON فقط. اكتب سكربت عربي واضح من 70 إلى 100 كلمة، ومعه خمس كلمات بحث مرئية باللغة الإنجليزية مناسبة لمقاطع stock video.\"\n    },\n    {\n      role: \"user\",\n      content: \"موضوع الفيديو: \" + $json.video_subject\n    }\n  ],\n  stream: false,\n  think: false,\n  keep_alive: \"30m\",\n  format: {\n    type: \"object\",\n    properties: {\n      script: { type: \"string\" },\n      search_terms: {\n        type: \"array\",\n        items: { type: \"string\" },\n        minItems: 5,\n        maxItems: 5\n      }\n    },\n    required: [\"script\",\"search_terms\"]\n  },\n  options: {\n    temperature: 0.2,\n    num_predict: 180\n  }\n}) }}",
-        "options": {
-          "timeout": 180000
-        }
-      },
-      "id": "5a5d935d-4310-4a76-aa0a-039450233d5a",
-      "name": "Generate Script Plan",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        780,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst ctx = $items('Video Gate')[0]?.json;\n\nif (!ctx) {\n  throw new Error('VIDEO_CONTEXT_NOT_FOUND');\n}\n\nconst raw = $json?.message?.content;\n\nif (!raw) {\n  throw new Error('OLLAMA_EMPTY_RESPONSE');\n}\n\nlet plan;\n\ntry {\n  plan = JSON.parse(raw);\n} catch {\n  throw new Error('OLLAMA_INVALID_JSON: ' + raw);\n}\n\nconst script = String(plan.script || '').trim();\n\nconst terms = Array.isArray(plan.search_terms)\n  ? plan.search_terms.map(x => String(x).trim()).filter(Boolean)\n  : [];\n\nif (!script) {\n  throw new Error('SCRIPT_EMPTY');\n}\n\nif (terms.length < 1) {\n  throw new Error('SEARCH_TERMS_EMPTY');\n}\n\nreturn [{\n  json:{\n    ...ctx,\n    video_script:script,\n    video_terms:terms\n  }\n}];\n"
-      },
-      "id": "0636d955-71b7-4caf-9bb4-48b2b597da61",
-      "name": "Parse Script Plan",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1040,
-        180
-      ]
     },
     {
       "parameters": {
@@ -241,6 +208,19 @@
           "name": "Pingoo Video Telegram"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst topic = String(\n  $json.video_subject || ''\n).trim();\n\nif (!topic) {\n  throw new Error('VIDEO_TOPIC_EMPTY');\n}\n\nconst script =\n`اليوم سنتحدث باختصار عن ${topic}.\nسنقدم الفكرة بطريقة سهلة وواضحة تساعدك على فهم أهم النقاط المتعلقة بهذا الموضوع.\nمن المهم النظر إلى ${topic} بصورة عملية، والتركيز على المعلومات الأساسية بدل التفاصيل المعقدة.\nخلال هذا الفيديو سنأخذ نظرة سريعة ومباشرة تساعدك على تكوين فكرة أفضل عن الموضوع.\nإذا وجدت هذه المعلومات مفيدة، يمكنك الاحتفاظ بالفيديو والعودة إليه لاحقاً.\nوالآن دعنا نبدأ مع ${topic}.`;\n\nreturn [{\n  json:{\n    ...$json,\n    video_script:script\n  }\n}];\n"
+      },
+      "id": "69ca4adc-dd8f-48ad-9a79-46c44a11f9b6",
+      "name": "Build Fast Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        180
+      ]
     }
   ],
   "connections": {
@@ -280,7 +260,7 @@
       "main": [
         [
           {
-            "node": "Generate Script Plan",
+            "node": "Build Fast Script",
             "type": "main",
             "index": 0
           }
@@ -303,28 +283,6 @@
         [
           {
             "node": "Telegram Task Created",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Script Plan": {
-      "main": [
-        [
-          {
-            "node": "Parse Script Plan",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Script Plan": {
-      "main": [
-        [
-          {
-            "node": "Create MoneyPrinterTurbo Task",
             "type": "main",
             "index": 0
           }
@@ -374,6 +332,17 @@
           }
         ]
       ]
+    },
+    "Build Fast Script": {
+      "main": [
+        [
+          {
+            "node": "Create MoneyPrinterTurbo Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -393,7 +362,7 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-18T17:24:37.171Z"
+          "last_seen_at": "2026-08-18T18:31:33.823Z"
         }
       },
       "jobs": [
@@ -429,9 +398,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "b1e7df7d-ff9e-4edd-a3b3-d9551b19e8c0",
+  "versionId": "b7f16fb8-80bc-4acd-80c9-aa3d6c5124ec",
   "activeVersionId": null,
-  "versionCounter": 28,
+  "versionCounter": 36,
   "triggerCount": 1,
   "tags": []
 }
