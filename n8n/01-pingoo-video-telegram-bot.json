@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T19:23:30.997025Z",
+  "updatedAt": "2026-08-18T19:37:43.105998Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -259,7 +259,14 @@
       "parameters": {
         "url": "=http://moneyprinterturbo-api:8080/api/v1/tasks/{{$json.task_id}}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "2fe2e64c-f16c-489d-b0ed-5cce4508feec",
@@ -273,7 +280,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const payload=responses[i]?.json?.data;\n\n  if (!ctx || !payload) {\n    continue;\n  }\n\n  const progress=Number(payload.progress || 0);\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos =\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
+        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const res=responses[i]?.json || {};\n\n  if (!ctx) {\n    continue;\n  }\n\n  const statusCode=Number(\n    res.statusCode ?? 200\n  );\n\n  const body=\n    res.body !== undefined\n      ? res.body\n      : res;\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  // Old task disappeared from Editing-Pingoo.\n  // Mark it so it is NOT polled again.\n  if (statusCode === 404) {\n\n    store.jobs[index]={\n      ...store.jobs[index],\n      status:'not_found',\n      progress:\n        Number(store.jobs[index].progress || 0),\n      last_poll_http:404,\n      last_polled_at:new Date().toISOString()\n    };\n\n    continue;\n  }\n\n  // Temporary API/network/server error:\n  // keep job pending so next minute retries it.\n  if (\n    statusCode < 200 ||\n    statusCode >= 300\n  ) {\n\n    store.jobs[index]={\n      ...store.jobs[index],\n      last_poll_http:statusCode,\n      last_polled_at:new Date().toISOString()\n    };\n\n    continue;\n  }\n\n  const payload=body?.data;\n\n  if (!payload) {\n    continue;\n  }\n\n  const progress=Number(\n    payload.progress || 0\n  );\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos=\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_poll_http:statusCode,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
       },
       "id": "f0d86aa5-db72-4243-a7b8-b694b58eef51",
       "name": "Update Scheduled Status",
@@ -513,12 +520,21 @@
           "language": "ar-SA",
           "voice": "ar-SA-HamedNeural",
           "video_aspect": "9:16",
-          "awaiting": "video_topic",
+          "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-18T19:15:08.912Z"
+          "last_seen_at": "2026-08-18T19:27:50.632Z"
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "fbbd1ddc-48b0-44e2-b951-15f471de5f36",
+          "topic": "فوائد شرب الماء",
+          "status": "submitted",
+          "progress": 0,
+          "created_at": "2026-08-18T19:27:51.662Z"
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -567,13 +583,16 @@
           "created_at": "2026-08-18T14:16:45.191Z"
         }
       ]
+    },
+    "node:Auto Poll Schedule": {
+      "recurrenceRules": []
     }
   },
   "meta": null,
   "pinData": {},
-  "versionId": "85fe4b7b-8888-40ad-8c7f-ca5e332ed5b6",
+  "versionId": "3c673313-8edb-4b58-8f8c-34e11643c5d1",
   "activeVersionId": null,
-  "versionCounter": 50,
-  "triggerCount": 1,
+  "versionCounter": 56,
+  "triggerCount": 2,
   "tags": []
 }
