@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T14:12:52.871487Z",
+  "updatedAt": "2026-08-18T18:04:26.223070Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -85,7 +85,7 @@
         "url": "http://moneyprinterturbo-api:8080/api/v1/videos",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n  video_count: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n  video_terms: $json.video_terms,\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n  video_count: 1\n}) }}",
         "options": {}
       },
       "id": "3ed2f40d-0e15-4229-aa39-b55b8c69b481",
@@ -93,7 +93,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        780,
+        1300,
         180
       ]
     },
@@ -106,7 +106,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1040,
+        1560,
         180
       ]
     },
@@ -132,6 +132,39 @@
           "name": "Pingoo Video Telegram"
         }
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pingoo-ollama:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"qwen3:0.6b\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"أنت كاتب فيديوهات قصيرة. أرجع JSON فقط. اكتب سكربت عربي واضح من 70 إلى 100 كلمة، ومعه خمس كلمات بحث مرئية باللغة الإنجليزية مناسبة لمقاطع stock video.\"\n    },\n    {\n      role: \"user\",\n      content: \"موضوع الفيديو: \" + $json.video_subject\n    }\n  ],\n  stream: false,\n  think: false,\n  keep_alive: \"30m\",\n  format: {\n    type: \"object\",\n    properties: {\n      script: { type: \"string\" },\n      search_terms: {\n        type: \"array\",\n        items: { type: \"string\" },\n        minItems: 5,\n        maxItems: 5\n      }\n    },\n    required: [\"script\",\"search_terms\"]\n  },\n  options: {\n    temperature: 0.2,\n    num_predict: 180\n  }\n}) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "5a5d935d-4310-4a76-aa0a-039450233d5a",
+      "name": "Generate Script Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        780,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx = $items('Video Gate')[0]?.json;\n\nif (!ctx) {\n  throw new Error('VIDEO_CONTEXT_NOT_FOUND');\n}\n\nconst raw = $json?.message?.content;\n\nif (!raw) {\n  throw new Error('OLLAMA_EMPTY_RESPONSE');\n}\n\nlet plan;\n\ntry {\n  plan = JSON.parse(raw);\n} catch {\n  throw new Error('OLLAMA_INVALID_JSON: ' + raw);\n}\n\nconst script = String(plan.script || '').trim();\n\nconst terms = Array.isArray(plan.search_terms)\n  ? plan.search_terms.map(x => String(x).trim()).filter(Boolean)\n  : [];\n\nif (!script) {\n  throw new Error('SCRIPT_EMPTY');\n}\n\nif (terms.length < 1) {\n  throw new Error('SEARCH_TERMS_EMPTY');\n}\n\nreturn [{\n  json:{\n    ...ctx,\n    video_script:script,\n    video_terms:terms\n  }\n}];\n"
+      },
+      "id": "0636d955-71b7-4caf-9bb4-48b2b597da61",
+      "name": "Parse Script Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        180
+      ]
     }
   ],
   "connections": {
@@ -166,7 +199,7 @@
       "main": [
         [
           {
-            "node": "Create MoneyPrinterTurbo Task",
+            "node": "Generate Script Plan",
             "type": "main",
             "index": 0
           }
@@ -194,18 +227,86 @@
           }
         ]
       ]
+    },
+    "Generate Script Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse Script Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Script Plan": {
+      "main": [
+        [
+          {
+            "node": "Create MoneyPrinterTurbo Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "staticData": null,
+  "staticData": {
+    "global": {
+      "users": {
+        "492998632": {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "username": "N0B0DY_2026",
+          "first_name": "N0B0DY",
+          "language": "ar-SA",
+          "voice": "ar-SA-HamedNeural",
+          "video_aspect": "9:16",
+          "awaiting": null,
+          "created_at": "2026-08-18T14:15:52.476Z",
+          "last_seen_at": "2026-08-18T17:24:37.171Z"
+        }
+      },
+      "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "a0a887fb-e594-4882-967c-bbc8781c7e89",
+          "topic": "فوائد المشي يومياً",
+          "status": "submitted",
+          "progress": 0,
+          "created_at": "2026-08-18T17:06:07.981Z"
+        },
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "3a55d867-0b12-46c9-abc1-c9977f06296a",
+          "topic": "البيتكوين",
+          "status": "submitted",
+          "progress": 0,
+          "created_at": "2026-08-18T14:54:48.989Z"
+        },
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "aa5498ec-6cff-4fda-92d4-0749716cc6af",
+          "topic": "أفضل 5 أماكن سياحية في السعودية",
+          "status": "submitted",
+          "progress": 0,
+          "created_at": "2026-08-18T14:16:45.191Z"
+        }
+      ]
+    }
+  },
   "meta": null,
   "pinData": {},
-  "versionId": "fe5cf7c4-d178-42b0-aeba-3e67a46c0f8b",
+  "versionId": "4c4d87cd-d04c-4e29-9fba-a421a8f8388e",
   "activeVersionId": null,
-  "versionCounter": 7,
+  "versionCounter": 25,
   "triggerCount": 1,
   "tags": []
 }
