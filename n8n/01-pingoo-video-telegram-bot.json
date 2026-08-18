@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-08-18T09:01:14.138656Z",
-  "createdAt": "2026-08-18T09:01:14.138656Z",
+  "updatedAt": "2026-08-18T13:52:10.648619Z",
+  "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
   "description": "Telegram command entry point for Editing-Pingoo",
@@ -24,10 +24,11 @@
       ],
       "credentials": {
         "telegramApi": {
-          "id": "",
+          "id": "WCESKUGL4NBFdR0W",
           "name": "Pingoo Video Telegram"
         }
-      }
+      },
+      "webhookId": "e1f572d9-d204-4ad6-b5ac-95b3af5f278e"
     },
     {
       "parameters": {
@@ -60,7 +61,7 @@
       ],
       "credentials": {
         "telegramApi": {
-          "id": "",
+          "id": "WCESKUGL4NBFdR0W",
           "name": "Pingoo Video Telegram"
         }
       }
@@ -97,9 +98,9 @@
   "staticData": null,
   "meta": null,
   "pinData": {},
-  "versionId": "0be620a2-a0f3-4d6b-8248-7ce821475e05",
+  "versionId": "12ff544e-dd45-448d-9799-f3c3ac971c70",
   "activeVersionId": null,
-  "versionCounter": 1,
-  "triggerCount": 0,
+  "versionCounter": 4,
+  "triggerCount": 1,
   "tags": []
 }
