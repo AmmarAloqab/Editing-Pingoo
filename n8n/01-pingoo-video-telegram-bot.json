@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T18:46:55.612792Z",
+  "updatedAt": "2026-08-18T19:09:10.956026Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -221,6 +221,125 @@
         780,
         180
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx =\n  $items('Video Gate')[0]?.json || {};\n\nconst created =\n  $items('Create MoneyPrinterTurbo Task')[0]?.json || {};\n\nconst taskId =\n  created?.data?.task_id ||\n  created?.task_id ||\n  $json?.task_id;\n\nif (!taskId) {\n  throw new Error(\n    'AUTO_POLL_TASK_ID_NOT_FOUND'\n  );\n}\n\nreturn [{\n  json:{\n    chat_id: ctx.chat_id,\n    telegram_id: ctx.telegram_id,\n    video_subject: ctx.video_subject,\n    task_id: taskId,\n    poll_started_at: Date.now()\n  }\n}];\n"
+      },
+      "id": "1591ad54-6c69-42e5-933c-51f818440f8f",
+      "name": "Prepare Auto Poll",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 20,
+        "unit": "seconds"
+      },
+      "id": "4f9d85b1-f197-4ed8-8126-949a14685d97",
+      "name": "Poll Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1780,
+        420
+      ],
+      "webhookId": "9305349e-d755-448f-ae9b-0b5a971f879d"
+    },
+    {
+      "parameters": {
+        "url": "=http://moneyprinterturbo-api:8080/api/v1/tasks/{{$json.task_id}}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "9a387372-a666-4802-9a76-ce6bd8d61296",
+      "name": "Get Automatic Task Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2020,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst ctx =\n  $items('Prepare Auto Poll')[0]?.json;\n\nif (!ctx) {\n  throw new Error(\n    'AUTO_POLL_CONTEXT_NOT_FOUND'\n  );\n}\n\nconst payload=$json?.data;\n\nif (!payload) {\n  throw new Error(\n    'AUTO_POLL_INVALID_API_RESPONSE: ' +\n    JSON.stringify($json)\n  );\n}\n\n\nconst progress =\n  Number(payload.progress || 0);\n\n\nlet status='processing';\n\n\nif (\n  payload.state === -1 ||\n  payload.failed_stage ||\n  payload.error\n) {\n  status='failed';\n}\n\n\nconst hasVideos =\n  (\n    Array.isArray(payload.videos) &&\n    payload.videos.length > 0\n  ) ||\n  (\n    Array.isArray(payload.combined_videos) &&\n    payload.combined_videos.length > 0\n  );\n\n\nif (\n  progress >= 100 ||\n  hasVideos\n) {\n  status='completed';\n}\n\n\nconst elapsed =\n  Date.now() -\n  Number(ctx.poll_started_at || Date.now());\n\n\nif (\n  status === 'processing' &&\n  elapsed >= 20 * 60 * 1000\n) {\n  status='timeout';\n}\n\n\nconst store =\n  $getWorkflowStaticData('global');\n\nif (!store.jobs) {\n  store.jobs=[];\n}\n\nif (!store.auto_poll_seen) {\n  store.auto_poll_seen={};\n}\n\n\nconst firstPoll =\n  !store.auto_poll_seen[ctx.task_id];\n\nstore.auto_poll_seen[ctx.task_id]=true;\n\n\nconst index =\n  store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n\nif (index >= 0) {\n  store.jobs[index]={\n    ...store.jobs[index],\n\n    status,\n    progress,\n    state:payload.state,\n\n    failed_stage:\n      payload.failed_stage ?? null,\n\n    error:\n      payload.error ?? null,\n\n    videos:\n      payload.videos ?? null,\n\n    combined_videos:\n      payload.combined_videos ?? null,\n\n    last_polled_at:\n      new Date().toISOString()\n  };\n}\n\n\nreturn [{\n  json:{\n    ...ctx,\n\n    progress,\n    status,\n    state:payload.state,\n\n    failed_stage:\n      payload.failed_stage ?? null,\n\n    error:\n      payload.error ?? null,\n\n    videos:\n      payload.videos ?? null,\n\n    combined_videos:\n      payload.combined_videos ?? null,\n\n    poll_action:\n      status === 'processing'\n        ? 'continue'\n        : 'stop',\n\n    first_poll:firstPoll,\n\n    poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n  }\n}];\n"
+      },
+      "id": "4d4d189f-b30f-4174-b08d-64d800859d81",
+      "name": "Evaluate Automatic Poll",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif ($json.poll_action !== 'continue') {\n  return [];\n}\n\nreturn items;\n"
+      },
+      "id": "bad684c1-f8bf-465c-8ec6-57396e4523b7",
+      "name": "Poll Continue Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif ($json.poll_action !== 'stop') {\n  return [];\n}\n\nreturn items;\n"
+      },
+      "id": "2686ce4c-4a4c-4dde-aa82-4251be2be41e",
+      "name": "Poll Stop Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif (!$json.first_poll) {\n  return [];\n}\n\nreturn items;\n"
+      },
+      "id": "0a5b77f9-2bf6-449e-95f7-e23f89b61015",
+      "name": "Poll First Notice Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.poll_notice }}",
+        "additionalFields": {}
+      },
+      "id": "fc946075-4241-4494-9de2-81a70a1c569e",
+      "name": "Telegram Poll Proof",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2740,
+        680
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "WCESKUGL4NBFdR0W",
+          "name": "Pingoo Video Telegram"
+        }
+      }
     }
   ],
   "connections": {
@@ -285,6 +404,11 @@
             "node": "Telegram Task Created",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Prepare Auto Poll",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -343,6 +467,92 @@
           }
         ]
       ]
+    },
+    "Prepare Auto Poll": {
+      "main": [
+        [
+          {
+            "node": "Poll Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Wait": {
+      "main": [
+        [
+          {
+            "node": "Get Automatic Task Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Automatic Task Status": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Automatic Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Automatic Poll": {
+      "main": [
+        [
+          {
+            "node": "Poll Continue Gate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Poll Stop Gate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Poll First Notice Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Continue Gate": {
+      "main": [
+        [
+          {
+            "node": "Poll Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Stop Gate": {
+      "main": [
+        []
+      ]
+    },
+    "Poll First Notice Gate": {
+      "main": [
+        [
+          {
+            "node": "Telegram Poll Proof",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Poll Proof": {
+      "main": [
+        []
+      ]
     }
   },
   "settings": {
@@ -362,10 +572,26 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-18T18:31:33.823Z"
+          "last_seen_at": "2026-08-18T18:53:04.172Z"
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "2a276b1f-e145-4e90-9848-9eb17fb5e237",
+          "topic": "فوائد المشي يومياً",
+          "status": "processing",
+          "progress": 50,
+          "created_at": "2026-08-18T18:50:27.246Z",
+          "state": 4,
+          "failed_stage": null,
+          "error": null,
+          "videos": null,
+          "combined_videos": null,
+          "audio_file": null,
+          "updated_at": "2026-08-18T18:53:06.378Z"
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -398,9 +624,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "b7f16fb8-80bc-4acd-80c9-aa3d6c5124ec",
+  "versionId": "d858e254-448c-40f0-aa5c-d986aae9ee26",
   "activeVersionId": null,
-  "versionCounter": 36,
+  "versionCounter": 44,
   "triggerCount": 1,
   "tags": []
 }
