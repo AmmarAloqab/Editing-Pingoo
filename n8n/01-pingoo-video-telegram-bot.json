@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T19:37:43.105998Z",
+  "updatedAt": "2026-08-18T19:46:56.681361Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -22,13 +22,13 @@
         0,
         0
       ],
+      "webhookId": "e1f572d9-d204-4ad6-b5ac-95b3af5f278e",
       "credentials": {
         "telegramApi": {
           "id": "WCESKUGL4NBFdR0W",
           "name": "Pingoo Video Telegram"
         }
-      },
-      "webhookId": "e1f572d9-d204-4ad6-b5ac-95b3af5f278e"
+      }
     },
     {
       "parameters": {
@@ -39,14 +39,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        260,
+        272,
         0
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": "={{ $json.chat_id }}",
         "text": "={{ $json.reply }}",
         "additionalFields": {}
@@ -56,9 +54,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        520,
+        528,
         0
       ],
+      "webhookId": "540374fa-8a00-472f-ab66-d9b77b58d709",
       "credentials": {
         "telegramApi": {
           "id": "WCESKUGL4NBFdR0W",
@@ -75,8 +74,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        520,
-        180
+        528,
+        192
       ]
     },
     {
@@ -94,7 +93,7 @@
       "typeVersion": 4.1,
       "position": [
         1040,
-        180
+        192
       ]
     },
     {
@@ -106,14 +105,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1300,
-        180
+        1312,
+        192
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": "={{ $json.chat_id }}",
         "text": "={{ $json.task_reply }}",
         "additionalFields": {}
@@ -123,9 +120,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1300,
-        180
+        1312,
+        192
       ],
+      "webhookId": "31654808-0afb-4125-9be6-02dca006c746",
       "credentials": {
         "telegramApi": {
           "id": "WCESKUGL4NBFdR0W",
@@ -142,8 +140,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        520,
-        -100
+        528,
+        -96
       ]
     },
     {
@@ -155,8 +153,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        520,
-        360
+        528,
+        368
       ]
     },
     {
@@ -169,8 +167,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        780,
-        360
+        784,
+        368
       ]
     },
     {
@@ -183,13 +181,11 @@
       "typeVersion": 2,
       "position": [
         1040,
-        360
+        368
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": "={{ $json.chat_id }}",
         "text": "={{ $json.status_reply }}",
         "additionalFields": {}
@@ -199,9 +195,10 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1300,
-        360
+        1312,
+        368
       ],
+      "webhookId": "72e0a205-e7e6-474d-ac25-fb79f24ed44e",
       "credentials": {
         "telegramApi": {
           "id": "WCESKUGL4NBFdR0W",
@@ -218,8 +215,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        780,
-        180
+        784,
+        192
       ]
     },
     {
@@ -238,35 +235,35 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        1500,
-        620
+        1504,
+        624
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nconst jobs=\n  Array.isArray(store.jobs)\n    ? store.jobs\n    : [];\n\nconst pending=jobs\n  .filter(j =>\n    j.task_id &&\n    (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status\n    )\n  )\n  .slice(0,20);\n\nreturn pending.map(j => ({\n  json:{\n    task_id:j.task_id,\n    chat_id:j.chat_id,\n    telegram_id:j.telegram_id,\n    video_subject:j.topic,\n    created_at:j.created_at\n  }\n}));\n"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nconst jobs=\n  Array.isArray(store.jobs)\n    ? store.jobs\n    : [];\n\nconst now=Date.now();\n\nconst selected=jobs\n  .filter(j => {\n\n    if (!j.task_id) {\n      return false;\n    }\n\n    if (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status\n    ) {\n      return true;\n    }\n\n    if (\n      j.status === 'completed' &&\n      !j.completion_detected_sent\n    ) {\n      const created=\n        Date.parse(j.created_at || '');\n\n      const age=\n        Number.isFinite(created)\n          ? now-created\n          : Infinity;\n\n      return age <= 30*60*1000;\n    }\n\n    return false;\n  })\n  .slice(0,20);\n\nreturn selected.map(j => ({\n  json:{\n    task_id:j.task_id,\n    chat_id:j.chat_id,\n    telegram_id:j.telegram_id,\n    video_subject:j.topic,\n    created_at:j.created_at\n  }\n}));\n"
       },
       "id": "299bf6fd-30d3-4810-bd14-0271204f2a8a",
       "name": "Load Pending Jobs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1740,
-        620
+        1744,
+        624
       ]
     },
     {
       "parameters": {
         "url": "=http://moneyprinterturbo-api:8080/api/v1/tasks/{{$json.task_id}}",
         "options": {
-          "timeout": 30000,
           "response": {
             "response": {
               "fullResponse": true,
               "neverError": true,
               "responseFormat": "json"
             }
-          }
+          },
+          "timeout": 30000
         }
       },
       "id": "2fe2e64c-f16c-489d-b0ed-5cce4508feec",
@@ -274,21 +271,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1980,
-        620
+        1984,
+        624
       ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const res=responses[i]?.json || {};\n\n  if (!ctx) {\n    continue;\n  }\n\n  const statusCode=Number(\n    res.statusCode ?? 200\n  );\n\n  const body=\n    res.body !== undefined\n      ? res.body\n      : res;\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  // Old task disappeared from Editing-Pingoo.\n  // Mark it so it is NOT polled again.\n  if (statusCode === 404) {\n\n    store.jobs[index]={\n      ...store.jobs[index],\n      status:'not_found',\n      progress:\n        Number(store.jobs[index].progress || 0),\n      last_poll_http:404,\n      last_polled_at:new Date().toISOString()\n    };\n\n    continue;\n  }\n\n  // Temporary API/network/server error:\n  // keep job pending so next minute retries it.\n  if (\n    statusCode < 200 ||\n    statusCode >= 300\n  ) {\n\n    store.jobs[index]={\n      ...store.jobs[index],\n      last_poll_http:statusCode,\n      last_polled_at:new Date().toISOString()\n    };\n\n    continue;\n  }\n\n  const payload=body?.data;\n\n  if (!payload) {\n    continue;\n  }\n\n  const progress=Number(\n    payload.progress || 0\n  );\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos=\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_poll_http:statusCode,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
+        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const payload=responses[i]?.json?.data;\n\n  if (!ctx || !payload) {\n    continue;\n  }\n\n  const progress=Number(payload.progress || 0);\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos =\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
       },
       "id": "f0d86aa5-db72-4243-a7b8-b694b58eef51",
       "name": "Update Scheduled Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2220,
-        620
+        2224,
+        624
       ]
     },
     {
@@ -300,14 +297,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2460,
-        620
+        2464,
+        624
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": "={{ $json.chat_id }}",
         "text": "={{ $json.poll_notice }}",
         "additionalFields": {}
@@ -317,8 +312,45 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
+        2704,
+        624
+      ],
+      "webhookId": "7cd652b7-9850-40e6-8045-3c78e7cf463c",
+      "credentials": {
+        "telegramApi": {
+          "id": "WCESKUGL4NBFdR0W",
+          "name": "Pingoo Video Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst output=[];\n\nfor (const item of $input.all()) {\n\n  const data=item.json;\n\n  if (data.status !== 'completed') {\n    continue;\n  }\n\n  const index=\n    store.jobs.findIndex(\n      j => j.task_id === data.task_id\n    );\n\n  if (index < 0) {\n    continue;\n  }\n\n  if (\n    store.jobs[index].completion_detected_sent\n  ) {\n    continue;\n  }\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    completion_detected_sent:true,\n    completion_detected_at:\n      new Date().toISOString()\n  };\n\n  output.push({\n    json:{\n      ...data,\n\n      completion_notice:\n`✅ تم اكتشاف اكتمال الفيديو تلقائياً\n\n🎬 الموضوع:\n${data.video_subject || ''}\n\n🆔 Task ID:\n${data.task_id}\n\n📈 التقدم:\n${data.progress}%\n\n⚙️ الحالة:\ncompleted`\n    }\n  });\n}\n\nreturn output;\n"
+      },
+      "id": "e685d8c2-b916-4b89-8ad5-4f9a0f87f6a4",
+      "name": "Completed Detection Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.completion_notice }}",
+        "additionalFields": {}
+      },
+      "id": "3f8e0fbb-7ed7-495e-885e-42e66476e3ea",
+      "name": "Telegram Completed Proof",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
         2700,
-        620
+        820
       ],
       "credentials": {
         "telegramApi": {
@@ -489,6 +521,11 @@
             "node": "Scheduled Poll Notice Gate",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Completed Detection Gate",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -502,6 +539,22 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Completed Detection Gate": {
+      "main": [
+        [
+          {
+            "node": "Telegram Completed Proof",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Completed Proof": {
+      "main": [
+        []
       ]
     }
   },
@@ -531,9 +584,17 @@
           "chat_id": 492998632,
           "task_id": "fbbd1ddc-48b0-44e2-b951-15f471de5f36",
           "topic": "فوائد شرب الماء",
-          "status": "submitted",
-          "progress": 0,
-          "created_at": "2026-08-18T19:27:51.662Z"
+          "status": "processing",
+          "progress": 75,
+          "created_at": "2026-08-18T19:27:51.662Z",
+          "state": 4,
+          "failed_stage": null,
+          "error": null,
+          "videos": null,
+          "combined_videos": null,
+          "auto_poll_notice_sent": true,
+          "last_poll_http": 200,
+          "last_polled_at": "2026-08-18T19:42:15.677Z"
         },
         {
           "telegram_id": "492998632",
@@ -560,27 +621,33 @@
           "chat_id": 492998632,
           "task_id": "a0a887fb-e594-4882-967c-bbc8781c7e89",
           "topic": "فوائد المشي يومياً",
-          "status": "submitted",
+          "status": "not_found",
           "progress": 0,
-          "created_at": "2026-08-18T17:06:07.981Z"
+          "created_at": "2026-08-18T17:06:07.981Z",
+          "last_poll_http": 404,
+          "last_polled_at": "2026-08-18T19:41:23.107Z"
         },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
           "task_id": "3a55d867-0b12-46c9-abc1-c9977f06296a",
           "topic": "البيتكوين",
-          "status": "submitted",
+          "status": "not_found",
           "progress": 0,
-          "created_at": "2026-08-18T14:54:48.989Z"
+          "created_at": "2026-08-18T14:54:48.989Z",
+          "last_poll_http": 404,
+          "last_polled_at": "2026-08-18T19:41:23.107Z"
         },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
           "task_id": "aa5498ec-6cff-4fda-92d4-0749716cc6af",
           "topic": "أفضل 5 أماكن سياحية في السعودية",
-          "status": "submitted",
+          "status": "not_found",
           "progress": 0,
-          "created_at": "2026-08-18T14:16:45.191Z"
+          "created_at": "2026-08-18T14:16:45.191Z",
+          "last_poll_http": 404,
+          "last_polled_at": "2026-08-18T19:41:23.107Z"
         }
       ]
     },
@@ -590,9 +657,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "3c673313-8edb-4b58-8f8c-34e11643c5d1",
+  "versionId": "e7040904-bf21-4fee-9b0f-e1666e143450",
   "activeVersionId": null,
-  "versionCounter": 56,
+  "versionCounter": 67,
   "triggerCount": 2,
   "tags": []
 }
