@@ -1219,6 +1219,8 @@ def _try_native_ffmpeg_final_render(
         "libx264",
         "-preset",
         "veryfast",
+        "-crf",
+        "20",
         "-threads",
         str(cpu_threads),
         "-pix_fmt",
@@ -1580,6 +1582,7 @@ def generate_video(
             temp_audiofile_path=_get_temp_audio_dir(output_dir),
             threads=max(1, min(6, os.cpu_count() or 6)),
             preset="veryfast",
+            ffmpeg_params=["-crf", "20", "-pix_fmt", "yuv420p"],
             logger=None,
             fps=fps,
         )
