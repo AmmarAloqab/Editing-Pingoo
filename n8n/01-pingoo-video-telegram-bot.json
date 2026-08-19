@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T07:47:10.674159Z",
+  "updatedAt": "2026-08-19T14:49:07.991197Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -84,7 +84,7 @@
         "url": "http://moneyprinterturbo-api:8080/api/v1/videos",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n\n  video_source: \"local\",\n\n  video_materials: [\n    {\n      provider: \"local\",\n      url: \"/MoneyPrinterTurbo/storage/local_videos/pingoo-test.mp4\",\n      duration: 0\n    }\n  ],\n\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n  video_source: \"pexels\",\n  video_terms: [$json.video_subject],\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n  video_clip_duration: 5,\n  match_materials_to_script: false,\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
         "options": {}
       },
       "id": "3ed2f40d-0e15-4229-aa39-b55b8c69b481",
@@ -713,10 +713,55 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-19T01:43:58.424Z"
+          "last_seen_at": "2026-08-19T14:40:35.315Z"
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "b09cf3b4-843d-49ed-9b99-7873a0ba3a82",
+          "topic": "فوائد المشي في الطبيعة",
+          "status": "processing",
+          "progress": 75,
+          "created_at": "2026-08-19T14:40:37.743Z",
+          "state": 4,
+          "failed_stage": null,
+          "error": null,
+          "videos": null,
+          "combined_videos": null,
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T14:48:15.804Z"
+        },
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "88dc4311-26dc-4a9e-b4b6-51d075b47f7f",
+          "topic": "فوائد النوم المبكر",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-19T08:00:14.901Z",
+          "state": 1,
+          "failed_stage": null,
+          "error": null,
+          "videos": [
+            "/tasks/88dc4311-26dc-4a9e-b4b6-51d075b47f7f/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/88dc4311-26dc-4a9e-b4b6-51d075b47f7f/combined-1.mp4"
+          ],
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T08:13:17.030Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T08:13:17.453Z",
+          "final_video_path": "/tasks/88dc4311-26dc-4a9e-b4b6-51d075b47f7f/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/88dc4311-26dc-4a9e-b4b6-51d075b47f7f/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T08:13:17.841Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T08:13:18.958Z",
+          "telegram_video_message_id": 124
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -737,13 +782,16 @@
           "audio_file": "/MoneyPrinterTurbo/storage/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/audio.mp3",
           "updated_at": "2026-08-19T01:43:58.691Z",
           "auto_poll_notice_sent": true,
-          "last_polled_at": "2026-08-19T07:30:16.353Z",
+          "last_polled_at": "2026-08-19T07:49:21.461Z",
           "completion_detected_sent": true,
           "completion_detected_at": "2026-08-19T07:30:17.807Z",
           "final_video_path": "/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/final-1.mp4",
           "final_video_url": "http://moneyprinterturbo-api:8080/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/final-1.mp4",
           "video_captured": true,
-          "video_captured_at": "2026-08-19T07:30:18.632Z"
+          "video_captured_at": "2026-08-19T07:49:21.663Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T07:49:24.811Z",
+          "telegram_video_message_id": 112
         },
         {
           "telegram_id": "492998632",
@@ -764,13 +812,16 @@
           ],
           "auto_poll_notice_sent": true,
           "last_poll_http": 200,
-          "last_polled_at": "2026-08-19T07:30:16.353Z",
+          "last_polled_at": "2026-08-19T07:49:21.465Z",
           "completion_detected_sent": true,
           "completion_detected_at": "2026-08-19T07:22:22.441Z",
           "final_video_path": "/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/final-1.mp4",
           "final_video_url": "http://moneyprinterturbo-api:8080/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/final-1.mp4",
           "video_captured": true,
-          "video_captured_at": "2026-08-19T07:30:18.637Z"
+          "video_captured_at": "2026-08-19T07:49:21.663Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T07:49:24.812Z",
+          "telegram_video_message_id": 113
         },
         {
           "telegram_id": "492998632",
@@ -792,13 +843,16 @@
           "audio_file": "/MoneyPrinterTurbo/storage/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/audio.mp3",
           "updated_at": "2026-08-18T19:13:40.977Z",
           "auto_poll_notice_sent": true,
-          "last_polled_at": "2026-08-19T07:30:16.353Z",
+          "last_polled_at": "2026-08-19T07:49:21.466Z",
           "completion_detected_sent": true,
           "completion_detected_at": "2026-08-19T07:30:17.807Z",
           "final_video_path": "/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/final-1.mp4",
           "final_video_url": "http://moneyprinterturbo-api:8080/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/final-1.mp4",
           "video_captured": true,
-          "video_captured_at": "2026-08-19T07:30:18.637Z"
+          "video_captured_at": "2026-08-19T07:49:21.663Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T07:49:24.812Z",
+          "telegram_video_message_id": 114
         },
         {
           "telegram_id": "492998632",
@@ -841,9 +895,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "160bb168-7f13-4801-aa37-3eb546167e08",
+  "versionId": "485fea33-e665-4dc1-b465-4150cd2e2d9a",
   "activeVersionId": null,
-  "versionCounter": 92,
+  "versionCounter": 127,
   "triggerCount": 2,
   "tags": []
 }
