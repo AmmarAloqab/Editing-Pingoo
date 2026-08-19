@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T07:28:01.655441Z",
+  "updatedAt": "2026-08-19T07:47:10.674159Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -241,7 +241,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst store=$getWorkflowStaticData('global');\nconst jobs=Array.isArray(store.jobs) ? store.jobs : [];\n\nreturn jobs\n  .filter(j =>\n    j.task_id &&\n    (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status ||\n      (j.status === 'completed' && !j.video_captured)\n    )\n  )\n  .slice(0,20)\n  .map(j => ({\n    json:{\n      task_id:j.task_id,\n      chat_id:j.chat_id,\n      telegram_id:j.telegram_id,\n      video_subject:j.topic,\n      created_at:j.created_at\n    }\n  }));\n"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nconst jobs=\n  Array.isArray(store.jobs)\n    ? store.jobs\n    : [];\n\nreturn jobs\n  .filter(j => {\n\n    if (!j.task_id) {\n      return false;\n    }\n\n    if (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status\n    ) {\n      return true;\n    }\n\n    if (\n      j.status === 'completed' &&\n      !j.telegram_video_sent\n    ) {\n      return true;\n    }\n\n    return false;\n  })\n  .slice(0,20)\n  .map(j => ({\n    json:{\n      task_id:j.task_id,\n      chat_id:j.chat_id,\n      telegram_id:j.telegram_id,\n      video_subject:j.topic,\n      created_at:j.created_at\n    }\n  }));\n"
       },
       "id": "299bf6fd-30d3-4810-bd14-0271204f2a8a",
       "name": "Load Pending Jobs",
@@ -369,6 +369,77 @@
       "typeVersion": 2,
       "position": [
         2480,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.final_video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "video"
+            }
+          }
+        }
+      },
+      "id": "3e582a1a-afd6-4e57-8d32-2ef732b61932",
+      "name": "Download Final Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2740,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst downloaded=$input.all();\n\nconst contexts=\n  $items('Capture Final Video');\n\nreturn downloaded.map(\n  (item,index) => {\n\n    const ctx=\n      contexts[index]?.json;\n\n    if (!ctx) {\n      throw new Error(\n        'FINAL_VIDEO_CONTEXT_NOT_FOUND'\n      );\n    }\n\n    if (!item.binary?.video) {\n      throw new Error(\n        'FINAL_VIDEO_BINARY_NOT_FOUND'\n      );\n    }\n\n    item.binary.video.fileName =\n      `pingoo-${ctx.task_id}.mp4`;\n\n    item.binary.video.mimeType =\n      'video/mp4';\n\n    return {\n      json:{\n        ...ctx\n      },\n      binary:item.binary\n    };\n  }\n);\n"
+      },
+      "id": "13f09c79-97cd-44d8-9dc4-60a06a9fce35",
+      "name": "Attach Final Video Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendVideo",
+        "chatId": "={{ $json.chat_id }}",
+        "binaryData": true,
+        "binaryPropertyName": "video",
+        "additionalFields": {}
+      },
+      "id": "9575ce63-2de7-4c53-b427-e0ae505292ca",
+      "name": "Telegram Send Final Video",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3220,
+        980
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "WCESKUGL4NBFdR0W",
+          "name": "Pingoo Video Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results=$input.all();\n\nconst contexts=\n  $items('Attach Final Video Context');\n\nconst store=\n  $getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (\n  let i=0;\n  i<results.length;\n  i++\n) {\n\n  const ctx=\n    contexts[i]?.json;\n\n  if (!ctx) {\n    continue;\n  }\n\n  const index=\n    store.jobs.findIndex(\n      j => j.task_id === ctx.task_id\n    );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const messageId=\n    results[i]?.json?.message_id ??\n    results[i]?.json?.result?.message_id ??\n    null;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n\n    telegram_video_sent:true,\n\n    telegram_video_sent_at:\n      new Date().toISOString(),\n\n    telegram_video_message_id:\n      messageId\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      telegram_video_sent:true,\n      telegram_video_message_id:\n        messageId\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "713d161d-3b13-4570-8597-33e0031b46f9",
+      "name": "Mark Telegram Video Sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3460,
         980
       ]
     }
@@ -577,6 +648,50 @@
     },
     "Capture Final Video": {
       "main": [
+        [
+          {
+            "node": "Download Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Final Video": {
+      "main": [
+        [
+          {
+            "node": "Attach Final Video Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Final Video Context": {
+      "main": [
+        [
+          {
+            "node": "Telegram Send Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Send Final Video": {
+      "main": [
+        [
+          {
+            "node": "Mark Telegram Video Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Telegram Video Sent": {
+      "main": [
         []
       ]
     }
@@ -620,7 +735,15 @@
             "/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/combined-1.mp4"
           ],
           "audio_file": "/MoneyPrinterTurbo/storage/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/audio.mp3",
-          "updated_at": "2026-08-19T01:43:58.691Z"
+          "updated_at": "2026-08-19T01:43:58.691Z",
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T07:30:16.353Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T07:30:17.807Z",
+          "final_video_path": "/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T07:30:18.632Z"
         },
         {
           "telegram_id": "492998632",
@@ -641,9 +764,13 @@
           ],
           "auto_poll_notice_sent": true,
           "last_poll_http": 200,
-          "last_polled_at": "2026-08-19T07:22:22.208Z",
+          "last_polled_at": "2026-08-19T07:30:16.353Z",
           "completion_detected_sent": true,
-          "completion_detected_at": "2026-08-19T07:22:22.441Z"
+          "completion_detected_at": "2026-08-19T07:22:22.441Z",
+          "final_video_path": "/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T07:30:18.637Z"
         },
         {
           "telegram_id": "492998632",
@@ -663,7 +790,15 @@
             "/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/combined-1.mp4"
           ],
           "audio_file": "/MoneyPrinterTurbo/storage/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/audio.mp3",
-          "updated_at": "2026-08-18T19:13:40.977Z"
+          "updated_at": "2026-08-18T19:13:40.977Z",
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T07:30:16.353Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T07:30:17.807Z",
+          "final_video_path": "/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/2a276b1f-e145-4e90-9848-9eb17fb5e237/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T07:30:18.637Z"
         },
         {
           "telegram_id": "492998632",
@@ -706,9 +841,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "06d291a8-4976-4be3-a7a7-831d1a56aeff",
+  "versionId": "160bb168-7f13-4801-aa37-3eb546167e08",
   "activeVersionId": null,
-  "versionCounter": 88,
+  "versionCounter": 92,
   "triggerCount": 2,
   "tags": []
 }
