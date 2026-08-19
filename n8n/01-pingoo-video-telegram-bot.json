@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T16:08:24.193737Z",
+  "updatedAt": "2026-08-19T16:32:54.938372Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -98,7 +98,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst ctxItems = $items('Video Gate');\nconst ctx = ctxItems.length ? ctxItems[0].json : {};\n\nconst taskId = $json?.data?.task_id;\n\nif (!taskId) {\n  return [{\n    json: {\n      chat_id: ctx.chat_id,\n      task_reply:\n`❌ لم يتم إنشاء المهمة في MoneyPrinterTurbo.\n\nالاستجابة:\n${JSON.stringify($json)}`\n    }\n  }];\n}\n\nconst store = $getWorkflowStaticData('global');\n\nif (!store.jobs) {\n  store.jobs = [];\n}\n\nconst job = {\n  telegram_id: String(ctx.telegram_id),\n  chat_id: ctx.chat_id,\n  task_id: taskId,\n  topic: ctx.video_subject,\n  status: 'submitted',\n  progress: 0,\n  created_at: new Date().toISOString()\n};\n\nstore.jobs.unshift(job);\n\n// نحتفظ بآخر 100 مهمة فقط\nstore.jobs = store.jobs.slice(0,100);\n\nreturn [{\n  json: {\n    ...ctx,\n    task_id: taskId,\n    task_reply:\n`✅ تم إنشاء مهمة الفيديو\n\n🎬 الموضوع:\n${ctx.video_subject}\n\n🆔 Task ID:\n${taskId}\n\nيمكنك استخدام /status لمتابعة الحالة.`\n  }\n}];\n"
+        "jsCode": "\nconst ctxItems = $items('Video Gate');\nconst ctx = ctxItems.length ? ctxItems[0].json : {};\n\nconst taskId = $json?.data?.task_id;\n\nif (!taskId) {\n  return [{\n    json: {\n      chat_id: ctx.chat_id,\n      task_reply:\n`❌ لم يتم إنشاء المهمة في MoneyPrinterTurbo.\n\nالاستجابة:\n${JSON.stringify($json)}`\n    }\n  }];\n}\n\nconst store = $getWorkflowStaticData('global');\n\nif (!store.jobs) {\n  store.jobs = [];\n}\n\nconst job = {\n  telegram_id: String(ctx.telegram_id),\n  chat_id: ctx.chat_id,\n  task_id: taskId,\n  title: $json.video_title || $json.video_subject,\n    topic: ctx.video_subject,\n  status: 'submitted',\n  progress: 0,\n  created_at: new Date().toISOString()\n};\n\nstore.jobs.unshift(job);\n\n// نحتفظ بآخر 100 مهمة فقط\nstore.jobs = store.jobs.slice(0,100);\n\nreturn [{\n  json: {\n    ...ctx,\n    task_id: taskId,\n    task_reply:\n`✅ تم إنشاء مهمة الفيديو\n\n🎬 الموضوع:\n${ctx.video_subject}\n\n🆔 Task ID:\n${taskId}\n\nيمكنك استخدام /status لمتابعة الحالة.`\n  }\n}];\n"
       },
       "id": "88f15956-d3af-4ae2-a9c3-020a4383fdf9",
       "name": "Save Video Job",
@@ -711,13 +711,30 @@
           "language": "ar-SA",
           "voice": "ar-SA-HamedNeural",
           "video_aspect": "9:16",
-          "awaiting": "manual_topic",
+          "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-19T16:05:38.215Z",
-          "pending_topic": null
+          "last_seen_at": "2026-08-19T16:30:58.053Z",
+          "pending_topic": null,
+          "pending_title": null
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "cc019656-58f0-448d-b70d-6d8574fdbbde",
+          "topic": "تاريخ ظهور البيتكوين وساتوشي ناكاموتو وبداية البلوكشين",
+          "status": "processing",
+          "progress": 50,
+          "created_at": "2026-08-19T16:11:36.533Z",
+          "state": 4,
+          "failed_stage": null,
+          "error": null,
+          "videos": null,
+          "combined_videos": null,
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T16:32:15.219Z"
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -967,9 +984,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "6d2b86a4-f2b4-432a-9a27-0c681f8f35eb",
+  "versionId": "cf47690a-8f9f-416a-b507-79a4a02cf1fd",
   "activeVersionId": null,
-  "versionCounter": 190,
+  "versionCounter": 219,
   "triggerCount": 2,
   "tags": []
 }
