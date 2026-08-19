@@ -550,6 +550,7 @@ def combine_videos(
     threads: int = 6,
     clip_speed: float = 1.0,
 ) -> str:
+    threads = max(1, min(6, os.cpu_count() or 6))
     audio_clip = AudioFileClip(audio_file)
     try:
         # 这里只需要读取旁白音频时长来决定素材视频拼接长度；后续不会再使用
@@ -974,6 +975,307 @@ def subtitle_font_supports_text(font_path: str, text: str) -> bool:
     return _subtitle_font_supports_sample(font_path, sample)
 
 
+
+# PINGOO_NATIVE_FFMPEG_FINAL_V1
+def _ass_color(value, default="#FFFFFF"):
+    """Convert #RRGGBB to ASS &H00BBGGRR&."""
+    raw = str(value or default).strip()
+
+    if not (
+        len(raw) == 7
+        and raw.startswith("#")
+    ):
+        raw = default
+
+    try:
+        rr = raw[1:3]
+        gg = raw[3:5]
+        bb = raw[5:7]
+        int(rr + gg + bb, 16)
+    except Exception:
+        rr, gg, bb = "FF", "FF", "FF"
+
+    return f"&H00{bb}{gg}{rr}&"
+
+
+def _escape_ffmpeg_subtitle_path(path):
+    return (
+        os.path.abspath(path)
+        .replace("\\", "/")
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+    )
+
+
+def _try_native_ffmpeg_final_render(
+    video_path,
+    audio_path,
+    subtitle_path,
+    output_file,
+    params,
+):
+    """
+    Fast path for Pingoo Telegram videos.
+
+    Instead of:
+      video -> raw RGB -> Python/MoviePy composite
+      -> raw RGBA -> ffmpeg
+
+    use one native FFmpeg process:
+      video + subtitles + voice -> final MP4
+
+    Returns True only when the native render succeeds.
+    Existing MoviePy path remains the fallback.
+    """
+
+    # Current Pingoo Telegram workflow uses no BGM.
+    # Keep MoviePy for BGM jobs so existing behaviour is preserved.
+    if bgm_service.should_use_bgm(
+        params.bgm_type,
+        params.bgm_volume,
+    ):
+        return False
+
+    ffmpeg = utils.get_ffmpeg_binary()
+
+    # Verify the running FFmpeg build has libass/subtitles support.
+    try:
+        filter_probe = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-filters",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"native ffmpeg filter probe failed: {exc}"
+        )
+        return False
+
+    if " subtitles " not in filter_probe.stdout:
+        logger.warning(
+            "ffmpeg subtitles filter unavailable; "
+            "using MoviePy fallback"
+        )
+        return False
+
+    cpu_threads = max(
+        1,
+        min(6, os.cpu_count() or 6),
+    )
+
+    command = [
+        ffmpeg,
+        "-y",
+        "-filter_threads",
+        str(cpu_threads),
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+    ]
+
+    if subtitle_path and os.path.exists(subtitle_path):
+        aspect = VideoAspect(params.video_aspect)
+        _, video_height = aspect.to_resolution()
+
+        font_size = max(
+            18,
+            int(params.font_size or 60),
+        )
+
+        stroke_width = max(
+            0,
+            int(params.stroke_width or 0),
+        )
+
+        fore_color = _ass_color(
+            params.text_fore_color,
+            "#FFFFFF",
+        )
+
+        stroke_color = _ass_color(
+            params.stroke_color,
+            "#000000",
+        )
+
+        bg_value = params.text_background_color
+
+        if isinstance(bg_value, bool):
+            background_enabled = bg_value
+            bg_color = "#000000"
+        else:
+            background_enabled = bool(bg_value)
+            bg_color = str(
+                bg_value or "#000000"
+            )
+
+        position = str(
+            params.subtitle_position or "bottom"
+        ).lower()
+
+        if position == "top":
+            alignment = 8
+            margin_v = 70
+
+        elif position == "center":
+            alignment = 5
+            margin_v = 0
+
+        elif position == "custom":
+            try:
+                percentage = float(
+                    params.custom_position
+                )
+            except Exception:
+                percentage = 70.0
+
+            percentage = max(
+                0.0,
+                min(100.0, percentage),
+            )
+
+            alignment = 2
+            margin_v = max(
+                20,
+                int(
+                    video_height
+                    * (1.0 - percentage / 100.0)
+                ),
+            )
+
+        else:
+            alignment = 2
+            margin_v = 70
+
+        border_style = (
+            3 if background_enabled else 1
+        )
+
+        back_color = _ass_color(
+            bg_color,
+            "#000000",
+        )
+
+        style = ",".join([
+            "FontName=DejaVu Sans",
+            f"FontSize={font_size}",
+            f"PrimaryColour={fore_color}",
+            f"OutlineColour={stroke_color}",
+            f"BackColour={back_color}",
+            f"BorderStyle={border_style}",
+            f"Outline={stroke_width}",
+            "Shadow=0",
+            f"Alignment={alignment}",
+            f"MarginV={margin_v}",
+            "MarginL=60",
+            "MarginR=60",
+        ])
+
+        subtitle_file = (
+            _escape_ffmpeg_subtitle_path(
+                subtitle_path
+            )
+        )
+
+        vf = (
+            "subtitles="
+            f"filename='{subtitle_file}':"
+            "charenc=UTF-8:"
+            "fontsdir="
+            "'/usr/share/fonts/truetype/dejavu':"
+            f"force_style='{style}'"
+        )
+
+        command.extend([
+            "-vf",
+            vf,
+        ])
+
+    try:
+        voice_volume = float(
+            params.voice_volume or 1.0
+        )
+    except Exception:
+        voice_volume = 1.0
+
+    if abs(voice_volume - 1.0) > 0.001:
+        command.extend([
+            "-af",
+            f"volume={voice_volume:.4f}",
+        ])
+
+    command.extend([
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-threads",
+        str(cpu_threads),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        audio_bitrate,
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        output_file,
+    ])
+
+    logger.info(
+        "Pingoo native FFmpeg final render: "
+        f"threads={cpu_threads}"
+    )
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if (
+        result.returncode == 0
+        and os.path.exists(output_file)
+        and os.path.getsize(output_file) > 0
+    ):
+        logger.success(
+            "Pingoo native FFmpeg final render completed"
+        )
+        return True
+
+    error_message = (
+        result.stderr
+        or result.stdout
+        or "unknown ffmpeg error"
+    ).strip()
+
+    logger.warning(
+        "Pingoo native FFmpeg render failed; "
+        "falling back to MoviePy. "
+        f"error: {error_message[-1500:]}"
+    )
+
+    try:
+        if os.path.exists(output_file):
+            os.remove(output_file)
+    except OSError:
+        pass
+
+    return False
+
+
 def generate_video(
     video_path: str,
     audio_path: str,
@@ -1012,6 +1314,16 @@ def generate_video(
             font_path = font_path.replace("\\", "/")
 
         logger.info(f"  ⑤ font: {font_path}")
+
+    if _try_native_ffmpeg_final_render(
+        video_path=video_path,
+        audio_path=audio_path,
+        subtitle_path=subtitle_path,
+        output_file=output_file,
+        params=params,
+    ):
+        return True
+
 
     def resolve_subtitle_background_color():
         # 兼容历史参数：API 里 `text_background_color` 既可能是布尔值，
@@ -1266,7 +1578,7 @@ def generate_video(
             audio_fps=output_audio_fps,
             audio_bitrate=audio_bitrate,
             temp_audiofile_path=_get_temp_audio_dir(output_dir),
-            threads=params.n_threads or 6,
+            threads=max(1, min(6, os.cpu_count() or 6)),
             preset="veryfast",
             logger=None,
             fps=fps,
