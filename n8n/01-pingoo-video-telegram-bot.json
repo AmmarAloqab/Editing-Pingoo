@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T16:32:54.938372Z",
+  "updatedAt": "2026-08-19T16:39:33.663067Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -84,7 +84,7 @@
         "url": "http://moneyprinterturbo-api:8080/api/v1/videos",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n  video_source: \"pexels\",\n  video_terms: [$json.video_subject],\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n  video_clip_duration: 5,\n  match_materials_to_script: false,\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n  video_source: \"pexels\",\n  video_terms: [$json.video_subject],\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n\n  font_name: \"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\",\n  video_clip_duration: 5,\n  match_materials_to_script: false,\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
         "options": {}
       },
       "id": "3ed2f40d-0e15-4229-aa39-b55b8c69b481",
@@ -713,7 +713,7 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-19T16:30:58.053Z",
+          "last_seen_at": "2026-08-19T16:35:58.554Z",
           "pending_topic": null,
           "pending_title": null
         }
@@ -725,7 +725,7 @@
           "task_id": "cc019656-58f0-448d-b70d-6d8574fdbbde",
           "topic": "تاريخ ظهور البيتكوين وساتوشي ناكاموتو وبداية البلوكشين",
           "status": "processing",
-          "progress": 50,
+          "progress": 75,
           "created_at": "2026-08-19T16:11:36.533Z",
           "state": 4,
           "failed_stage": null,
@@ -733,7 +733,7 @@
           "videos": null,
           "combined_videos": null,
           "auto_poll_notice_sent": true,
-          "last_polled_at": "2026-08-19T16:32:15.219Z"
+          "last_polled_at": "2026-08-19T16:39:15.797Z"
         },
         {
           "telegram_id": "492998632",
@@ -984,9 +984,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "cf47690a-8f9f-416a-b507-79a4a02cf1fd",
+  "versionId": "633532c6-d393-4fb2-9d83-d1c4e924db90",
   "activeVersionId": null,
-  "versionCounter": 219,
+  "versionCounter": 228,
   "triggerCount": 2,
   "tags": []
 }
