@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T07:19:47.294759Z",
+  "updatedAt": "2026-08-19T07:28:01.655441Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -241,7 +241,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nconst jobs=\n  Array.isArray(store.jobs)\n    ? store.jobs\n    : [];\n\nconst now=Date.now();\n\nconst selected=jobs\n  .filter(j => {\n\n    if (!j.task_id) {\n      return false;\n    }\n\n    if (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status\n    ) {\n      return true;\n    }\n\n    if (\n      j.status === 'completed' &&\n      !j.completion_detected_sent\n    ) {\n      const created=\n        Date.parse(j.created_at || '');\n\n      const age=\n        Number.isFinite(created)\n          ? now-created\n          : Infinity;\n\n      return age <= 30*60*1000;\n    }\n\n    return false;\n  })\n  .slice(0,20);\n\nreturn selected.map(j => ({\n  json:{\n    task_id:j.task_id,\n    chat_id:j.chat_id,\n    telegram_id:j.telegram_id,\n    video_subject:j.topic,\n    created_at:j.created_at\n  }\n}));\n"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\nconst jobs=Array.isArray(store.jobs) ? store.jobs : [];\n\nreturn jobs\n  .filter(j =>\n    j.task_id &&\n    (\n      j.status === 'submitted' ||\n      j.status === 'processing' ||\n      !j.status ||\n      (j.status === 'completed' && !j.video_captured)\n    )\n  )\n  .slice(0,20)\n  .map(j => ({\n    json:{\n      task_id:j.task_id,\n      chat_id:j.chat_id,\n      telegram_id:j.telegram_id,\n      video_subject:j.topic,\n      created_at:j.created_at\n    }\n  }));\n"
       },
       "id": "299bf6fd-30d3-4810-bd14-0271204f2a8a",
       "name": "Load Pending Jobs",
@@ -358,6 +358,19 @@
           "name": "Pingoo Video Telegram"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (const item of $input.all()) {\n\n  if (item.json.status !== 'completed') {\n    continue;\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === item.json.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const job=store.jobs[index];\n\n  const videos=Array.isArray(job.videos)\n    ? job.videos\n    : [];\n\n  const finalPath=videos.find(\n    v => String(v).includes('final-1.mp4')\n  ) || videos[0];\n\n  if (!finalPath) {\n    continue;\n  }\n\n  const finalUrl=\n    'http://moneyprinterturbo-api:8080' +\n    finalPath;\n\n  store.jobs[index]={\n    ...job,\n    final_video_path:finalPath,\n    final_video_url:finalUrl,\n    video_captured:true,\n    video_captured_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...item.json,\n      final_video_path:finalPath,\n      final_video_url:finalUrl,\n      video_captured:true\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "bd59a543-4b1e-4789-8b43-547624182db0",
+      "name": "Capture Final Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        980
+      ]
     }
   ],
   "connections": {
@@ -526,6 +539,11 @@
             "node": "Completed Detection Gate",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Capture Final Video",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -553,6 +571,11 @@
       ]
     },
     "Telegram Completed Proof": {
+      "main": [
+        []
+      ]
+    },
+    "Capture Final Video": {
       "main": [
         []
       ]
@@ -604,17 +627,23 @@
           "chat_id": 492998632,
           "task_id": "fbbd1ddc-48b0-44e2-b951-15f471de5f36",
           "topic": "فوائد شرب الماء",
-          "status": "processing",
-          "progress": 75,
+          "status": "completed",
+          "progress": 100,
           "created_at": "2026-08-18T19:27:51.662Z",
-          "state": 4,
+          "state": 1,
           "failed_stage": null,
           "error": null,
-          "videos": null,
-          "combined_videos": null,
+          "videos": [
+            "/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/fbbd1ddc-48b0-44e2-b951-15f471de5f36/combined-1.mp4"
+          ],
           "auto_poll_notice_sent": true,
           "last_poll_http": 200,
-          "last_polled_at": "2026-08-18T19:42:15.677Z"
+          "last_polled_at": "2026-08-19T07:22:22.208Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T07:22:22.441Z"
         },
         {
           "telegram_id": "492998632",
@@ -677,9 +706,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "4249f1bb-7a9e-4fdb-93c4-805730fff9c8",
+  "versionId": "06d291a8-4976-4be3-a7a7-831d1a56aeff",
   "activeVersionId": null,
-  "versionCounter": 84,
+  "versionCounter": 88,
   "triggerCount": 2,
   "tags": []
 }
