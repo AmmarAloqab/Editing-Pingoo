@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-18T19:46:56.681361Z",
+  "updatedAt": "2026-08-19T07:19:47.294759Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -277,7 +277,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const payload=responses[i]?.json?.data;\n\n  if (!ctx || !payload) {\n    continue;\n  }\n\n  const progress=Number(payload.progress || 0);\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos =\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
+        "jsCode": "\nconst responses=$input.all();\nconst contexts=$items('Load Pending Jobs');\n\nconst store=$getWorkflowStaticData('global');\n\nif (!Array.isArray(store.jobs)) {\n  store.jobs=[];\n}\n\nconst out=[];\n\nfor (let i=0; i<responses.length; i++) {\n\n  const ctx=contexts[i]?.json;\n  const payload=responses[i]?.json?.body?.data ?? responses[i]?.json?.data;\n\n  if (!ctx || !payload) {\n    continue;\n  }\n\n  const progress=Number(payload.progress || 0);\n\n  let status='processing';\n\n  if (\n    payload.state === -1 ||\n    payload.failed_stage ||\n    payload.error\n  ) {\n    status='failed';\n  }\n\n  const hasVideos =\n    (\n      Array.isArray(payload.videos) &&\n      payload.videos.length > 0\n    ) ||\n    (\n      Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos\n  ) {\n    status='completed';\n  }\n\n  const index=store.jobs.findIndex(\n    j => j.task_id === ctx.task_id\n  );\n\n  if (index < 0) {\n    continue;\n  }\n\n  const firstNotice=\n    !store.jobs[index].auto_poll_notice_sent;\n\n  store.jobs[index]={\n    ...store.jobs[index],\n    status,\n    progress,\n    state:payload.state,\n    failed_stage:payload.failed_stage ?? null,\n    error:payload.error ?? null,\n    videos:payload.videos ?? null,\n    combined_videos:payload.combined_videos ?? null,\n    auto_poll_notice_sent:true,\n    last_polled_at:new Date().toISOString()\n  };\n\n  out.push({\n    json:{\n      ...ctx,\n      status,\n      progress,\n      state:payload.state,\n      send_notice:firstNotice,\n      poll_notice:\n`🔄 المتابعة التلقائية تعمل\n\n🆔 ${ctx.task_id}\n\n📈 الحالة الحقيقية من Editing-Pingoo:\n${progress}%`\n    }\n  });\n}\n\nreturn out;\n"
       },
       "id": "f0d86aa5-db72-4243-a7b8-b694b58eef51",
       "name": "Update Scheduled Status",
@@ -575,10 +575,30 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-18T19:27:50.632Z"
+          "last_seen_at": "2026-08-19T01:43:58.424Z"
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "6f81b7e0-3aef-4bd3-95e2-662f1eacf663",
+          "topic": "فوائد شرب الماء",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-18T23:27:02.759Z",
+          "state": 1,
+          "failed_stage": null,
+          "error": null,
+          "videos": [
+            "/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/combined-1.mp4"
+          ],
+          "audio_file": "/MoneyPrinterTurbo/storage/tasks/6f81b7e0-3aef-4bd3-95e2-662f1eacf663/audio.mp3",
+          "updated_at": "2026-08-19T01:43:58.691Z"
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -657,9 +677,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "e7040904-bf21-4fee-9b0f-e1666e143450",
+  "versionId": "4249f1bb-7a9e-4fdb-93c4-805730fff9c8",
   "activeVersionId": null,
-  "versionCounter": 67,
+  "versionCounter": 84,
   "triggerCount": 2,
   "tags": []
 }
