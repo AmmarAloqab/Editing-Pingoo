@@ -353,11 +353,15 @@ def concat_video_clips_with_ffmpeg(
             concat_list_file,
             "-c:v",
             codec,
+        ]
+        if codec == _DEFAULT_VIDEO_CODEC:
+            command.extend(["-preset", "veryfast"])
+        command.extend([
             "-threads",
-            str(threads or 2),
+            str(threads or 6),
             "-pix_fmt",
             "yuv420p",
-        ]
+        ])
         if max_duration is not None and max_duration > 0:
             command.extend(["-t", f"{max_duration:.3f}"])
         command.append(output_file)
@@ -543,7 +547,7 @@ def combine_videos(
     video_concat_mode: VideoConcatMode = VideoConcatMode.random,
     video_transition_mode: VideoTransitionMode = None,
     max_clip_duration: int = 5,
-    threads: int = 2,
+    threads: int = 6,
     clip_speed: float = 1.0,
 ) -> str:
     audio_clip = AudioFileClip(audio_file)
@@ -699,6 +703,8 @@ def combine_videos(
                 clip,
                 clip_file,
                 codec=_get_configured_video_codec(),
+                threads=threads or 6,
+                preset="veryfast",
                 logger=None,
                 fps=fps,
             )
@@ -1260,7 +1266,8 @@ def generate_video(
             audio_fps=output_audio_fps,
             audio_bitrate=audio_bitrate,
             temp_audiofile_path=_get_temp_audio_dir(output_dir),
-            threads=params.n_threads or 2,
+            threads=params.n_threads or 6,
+            preset="veryfast",
             logger=None,
             fps=fps,
         )
