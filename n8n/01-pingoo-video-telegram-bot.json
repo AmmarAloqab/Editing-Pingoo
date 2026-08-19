@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-19T14:49:07.991197Z",
+  "updatedAt": "2026-08-19T15:41:02.104962Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst store = $getWorkflowStaticData('global');\n\nif (!store.users) store.users = {};\nif (!store.jobs) store.jobs = [];\n\nconst m = $json.message ?? {};\nconst text = (m.text ?? '').trim();\n\nconst chatId = m.chat?.id;\nconst telegramId = String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId] = {\n    telegram_id: telegramId,\n    chat_id: chatId,\n    username: m.from?.username ?? '',\n    first_name: m.from?.first_name ?? '',\n    language: 'ar-SA',\n    voice: 'ar-SA-HamedNeural',\n    video_aspect: '9:16',\n    awaiting: null,\n    created_at: new Date().toISOString()\n  };\n}\n\nconst user = store.users[telegramId];\n\nuser.chat_id = chatId;\nuser.username = m.from?.username ?? user.username ?? '';\nuser.first_name = m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at = new Date().toISOString();\n\nlet command = '';\n\nif (text.startsWith('/')) {\n  command = text\n    .split(/\\s+/)[0]\n    .split('@')[0]\n    .toLowerCase();\n}\n\nlet route = 'reply';\nlet reply = '';\nlet videoSubject = '';\nlet taskId = '';\n\nif (command === '/start') {\n\n  user.awaiting = null;\n\n  reply =\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n} else if (command === '/video') {\n\n  videoSubject = text\n    .replace(/^\\/video(?:@\\w+)?/i, '')\n    .trim();\n\n  if (!videoSubject) {\n\n    user.awaiting = 'video_topic';\n\n    reply =\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nأفضل 5 أماكن سياحية في السعودية`;\n\n  } else {\n\n    user.awaiting = null;\n    route = 'video';\n\n    reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'video_topic' &&\n  text\n) {\n\n  videoSubject = text;\n  user.awaiting = null;\n  route = 'video';\n\n  reply =\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n\n} else if (command === '/status') {\n\n  const job = store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n\n    reply = '📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n\n  } else {\n\n    route = 'status';\n    taskId = job.task_id;\n  }\n\n} else if (command === '/history') {\n\n  const jobs = store.jobs\n    .filter(j => String(j.telegram_id) === telegramId)\n    .slice(0,5);\n\n  if (!jobs.length) {\n\n    reply = '📚 السجل فارغ.';\n\n  } else {\n\n    reply =\n      '📚 آخر المهام\\n\\n' +\n      jobs.map((j,i) =>\n        `${i+1}. ${j.topic}\\n${j.task_id}\\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply =\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting = null;\n\n  reply = '❌ تم إلغاء أي طلب إدخال غير مكتمل.';\n\n} else {\n\n  reply =\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: telegramId,\n    username: user.username,\n    command,\n    route,\n    task_id: taskId,\n    video_subject: videoSubject,\n    video_language: user.language,\n    voice_name: user.voice,\n    video_aspect: user.video_aspect,\n    reply\n  }\n}];\n"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nif (!store.users) store.users={};\nif (!store.jobs) store.jobs=[];\n\nconst m=$json.message ?? {};\nconst text=(m.text ?? '').trim();\n\nconst chatId=m.chat?.id;\nconst telegramId=String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId]={\n    telegram_id:telegramId,\n    chat_id:chatId,\n    username:m.from?.username ?? '',\n    first_name:m.from?.first_name ?? '',\n    language:'ar-SA',\n    voice:'ar-SA-HamedNeural',\n    video_aspect:'9:16',\n    awaiting:null,\n    pending_topic:null,\n    created_at:new Date().toISOString()\n  };\n}\n\nconst user=store.users[telegramId];\n\nuser.chat_id=chatId;\nuser.username=m.from?.username ?? user.username ?? '';\nuser.first_name=m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at=new Date().toISOString();\n\nlet command='';\n\nif (text.startsWith('/')) {\n  command=text\n    .split(/\\s+/)[0]\n    .split('@')[0]\n    .toLowerCase();\n}\n\nlet route='reply';\nlet reply='';\nlet videoSubject='';\nlet videoScript='';\nlet scriptMode='';\nlet taskId='';\n\nif (command === '/start') {\n\n  user.awaiting=null;\n  user.pending_topic=null;\n\n  reply=\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو تلقائي\n/script إدخال سكربت يدوي\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n} else if (command === '/video') {\n\n  videoSubject=text\n    .replace(/^\\/video(?:@\\w+)?/i,'')\n    .trim();\n\n  if (!videoSubject) {\n\n    user.awaiting='video_topic';\n    user.pending_topic=null;\n\n    reply=\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nأفضل 5 أماكن سياحية في السعودية`;\n\n  } else {\n\n    user.awaiting=null;\n    user.pending_topic=null;\n\n    route='video';\n    scriptMode='auto';\n\n    reply=\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n  }\n\n} else if (command === '/script') {\n\n  const topic=text\n    .replace(/^\\/script(?:@\\w+)?/i,'')\n    .trim();\n\n  if (topic) {\n\n    user.pending_topic=topic;\n    user.awaiting='manual_script';\n\n    reply=\n`✍️ تم حفظ موضوع الفيديو:\n${topic}\n\nأرسل الآن السكربت كاملًا كما تريد أن يُستخدم في الفيديو.`;\n\n  } else {\n\n    user.pending_topic=null;\n    user.awaiting='manual_topic';\n\n    reply=\n`✍️ وضع السكربت اليدوي\n\nأرسل أولًا موضوع الفيديو.\n\nمثال:\nفوائد شرب الماء`;\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_topic' &&\n  text\n) {\n\n  user.pending_topic=text;\n  user.awaiting='manual_script';\n\n  reply=\n`✅ تم حفظ الموضوع:\n${text}\n\nأرسل الآن السكربت كاملًا.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_script' &&\n  text\n) {\n\n  videoSubject=String(\n    user.pending_topic || 'سكريبت يدوي'\n  ).trim();\n\n  videoScript=text;\n\n  user.awaiting=null;\n  user.pending_topic=null;\n\n  route='video';\n  scriptMode='manual';\n\n  reply=\n`✅ تم استلام السكربت اليدوي.\n\nالموضوع:\n${videoSubject}\n\nسيتم استخدام النص كما أرسلته بدون إعادة كتابة.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'video_topic' &&\n  text\n) {\n\n  videoSubject=text;\n\n  user.awaiting=null;\n  user.pending_topic=null;\n\n  route='video';\n  scriptMode='auto';\n\n  reply=\n`⏳ تم استلام الموضوع:\n${videoSubject}\n\nجاري تجهيز السكربت وإنشاء المهمة...`;\n\n} else if (command === '/status') {\n\n  const job=store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n\n    reply='📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n\n  } else {\n\n    route='status';\n    taskId=job.task_id;\n  }\n\n} else if (command === '/history') {\n\n  const jobs=store.jobs\n    .filter(\n      j => String(j.telegram_id) === telegramId\n    )\n    .slice(0,5);\n\n  if (!jobs.length) {\n\n    reply='📚 السجل فارغ.';\n\n  } else {\n\n    reply=\n      '📚 آخر المهام\\n\\n' +\n      jobs.map(\n        (j,i) =>\n`${i+1}. ${j.topic}\n${j.task_id}\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply=\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting=null;\n  user.pending_topic=null;\n\n  reply='❌ تم إلغاء أي طلب إدخال غير مكتمل.';\n\n} else {\n\n  reply=\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\nreturn [{\n  json:{\n    chat_id:chatId,\n    telegram_id:telegramId,\n    username:user.username,\n    command,\n    route,\n    task_id:taskId,\n\n    video_subject:videoSubject,\n    video_script:videoScript,\n    script_mode:scriptMode,\n\n    video_language:user.language,\n    voice_name:user.voice,\n    video_aspect:user.video_aspect,\n\n    reply\n  }\n}];\n"
       },
       "id": "1e9908eb-6ef9-42ac-9ea7-fb9ec1a1bf34",
       "name": "Command Router",
@@ -208,7 +208,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst topic = String(\n  $json.video_subject || ''\n).trim();\n\nif (!topic) {\n  throw new Error('VIDEO_TOPIC_EMPTY');\n}\n\nconst script =\n`اليوم سنتحدث باختصار عن ${topic}.\nسنقدم الفكرة بطريقة سهلة وواضحة تساعدك على فهم أهم النقاط المتعلقة بهذا الموضوع.\nمن المهم النظر إلى ${topic} بصورة عملية، والتركيز على المعلومات الأساسية بدل التفاصيل المعقدة.\nخلال هذا الفيديو سنأخذ نظرة سريعة ومباشرة تساعدك على تكوين فكرة أفضل عن الموضوع.\nإذا وجدت هذه المعلومات مفيدة، يمكنك الاحتفاظ بالفيديو والعودة إليه لاحقاً.\nوالآن دعنا نبدأ مع ${topic}.`;\n\nreturn [{\n  json:{\n    ...$json,\n    video_script:script\n  }\n}];\n"
+        "jsCode": "\nconst topic=String(\n  $json.video_subject || ''\n).trim();\n\nconst providedScript=String(\n  $json.video_script || ''\n).trim();\n\nif (!topic) {\n  throw new Error('VIDEO_TOPIC_EMPTY');\n}\n\n/*\n * Manual mode:\n * preserve the user's script exactly.\n */\nif (providedScript) {\n  return [{\n    json:{\n      ...$json,\n      video_script:providedScript,\n      script_mode:'manual'\n    }\n  }];\n}\n\n/*\n * Automatic fallback.\n */\nconst script=\n`اليوم سنتحدث باختصار عن ${topic}.\nسنقدم الفكرة بطريقة سهلة وواضحة تساعدك على فهم أهم النقاط المتعلقة بهذا الموضوع.\nمن المهم النظر إلى ${topic} بصورة عملية، والتركيز على المعلومات الأساسية بدل التفاصيل المعقدة.\nخلال هذا الفيديو سنأخذ نظرة سريعة ومباشرة تساعدك على تكوين فكرة أفضل عن الموضوع.\nإذا وجدت هذه المعلومات مفيدة، يمكنك الاحتفاظ بالفيديو والعودة إليه لاحقاً.\nوالآن دعنا نبدأ مع ${topic}.`;\n\nreturn [{\n  json:{\n    ...$json,\n    video_script:script,\n    script_mode:'auto'\n  }\n}];\n"
       },
       "id": "69ca4adc-dd8f-48ad-9a79-46c44a11f9b6",
       "name": "Build Fast Script",
@@ -713,25 +713,96 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-19T14:40:35.315Z"
+          "last_seen_at": "2026-08-19T15:04:04.648Z"
         }
       },
       "jobs": [
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
-          "task_id": "b09cf3b4-843d-49ed-9b99-7873a0ba3a82",
-          "topic": "فوائد المشي في الطبيعة",
-          "status": "processing",
-          "progress": 75,
-          "created_at": "2026-08-19T14:40:37.743Z",
-          "state": 4,
+          "task_id": "71b93744-b54e-47c6-bacc-8f62e25cc262",
+          "topic": "بداية البيتكوين",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-19T15:04:06.940Z",
+          "state": 1,
           "failed_stage": null,
           "error": null,
-          "videos": null,
-          "combined_videos": null,
+          "videos": [
+            "/tasks/71b93744-b54e-47c6-bacc-8f62e25cc262/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/71b93744-b54e-47c6-bacc-8f62e25cc262/combined-1.mp4"
+          ],
           "auto_poll_notice_sent": true,
-          "last_polled_at": "2026-08-19T14:48:15.804Z"
+          "last_polled_at": "2026-08-19T15:38:16.379Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T15:38:16.634Z",
+          "final_video_path": "/tasks/71b93744-b54e-47c6-bacc-8f62e25cc262/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/71b93744-b54e-47c6-bacc-8f62e25cc262/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T15:38:16.784Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T15:38:19.539Z",
+          "telegram_video_message_id": 156
+        },
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "95e19478-8935-4235-866d-a47f0b9a6321",
+          "topic": "فوائد النوم المبكر",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-19T14:59:33.790Z",
+          "state": 1,
+          "failed_stage": null,
+          "error": null,
+          "videos": [
+            "/tasks/95e19478-8935-4235-866d-a47f0b9a6321/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/95e19478-8935-4235-866d-a47f0b9a6321/combined-1.mp4"
+          ],
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T15:34:15.768Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T15:34:15.873Z",
+          "final_video_path": "/tasks/95e19478-8935-4235-866d-a47f0b9a6321/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/95e19478-8935-4235-866d-a47f0b9a6321/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T15:34:16.587Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T15:34:21.760Z",
+          "telegram_video_message_id": 154
+        },
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "b09cf3b4-843d-49ed-9b99-7873a0ba3a82",
+          "topic": "فوائد المشي في الطبيعة",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-19T14:40:37.743Z",
+          "state": 1,
+          "failed_stage": null,
+          "error": null,
+          "videos": [
+            "/tasks/b09cf3b4-843d-49ed-9b99-7873a0ba3a82/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/b09cf3b4-843d-49ed-9b99-7873a0ba3a82/combined-1.mp4"
+          ],
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-19T14:56:16.060Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-19T14:56:16.229Z",
+          "final_video_path": "/tasks/b09cf3b4-843d-49ed-9b99-7873a0ba3a82/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/b09cf3b4-843d-49ed-9b99-7873a0ba3a82/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-19T14:56:16.678Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-19T14:56:17.807Z",
+          "telegram_video_message_id": 142
         },
         {
           "telegram_id": "492998632",
@@ -895,9 +966,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "485fea33-e665-4dc1-b465-4150cd2e2d9a",
+  "versionId": "3291ec45-ec53-4537-8ffe-c7d07eebc654",
   "activeVersionId": null,
-  "versionCounter": 127,
+  "versionCounter": 178,
   "triggerCount": 2,
   "tags": []
 }
