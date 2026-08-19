@@ -367,6 +367,55 @@ def concat_video_clips_with_ffmpeg(
         command.append(output_file)
         return command
 
+    # PINGOO_STREAM_COPY_CONCAT_V1
+    def run_concat_copy():
+        """
+        Temp clips are already normalized MP4/H.264 clips.
+        Try concatenating them without another full video encode.
+        If streams are incompatible, caller falls back automatically.
+        """
+        command = [
+            utils.get_ffmpeg_binary(),
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_list_file,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            output_file,
+        ]
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            error_message = (
+                result.stderr
+                or result.stdout
+                or ""
+            ).strip()
+
+            raise RuntimeError(
+                error_message
+                or "ffmpeg stream-copy concat failed"
+            )
+
+        logger.info(
+            "Pingoo FFmpeg stream-copy concat completed"
+        )
+
+        return "copy"
+
+
     def run_concat(codec: str):
         command = build_command(codec)
         # 使用 ffmpeg 只做一次串联与编码，避免 MoviePy 逐段合并时反复重编码，
@@ -383,6 +432,18 @@ def concat_video_clips_with_ffmpeg(
         return codec
 
     try:
+        try:
+            logger.info(
+                "Pingoo trying stream-copy concat"
+            )
+            return run_concat_copy()
+        except Exception as copy_exc:
+            logger.warning(
+                "Pingoo stream-copy concat failed; "
+                "falling back to encoded concat. "
+                f"reason: {str(copy_exc)}"
+            )
+
         effective_codec = _get_effective_video_codec()
         try:
             return run_concat(effective_codec)
@@ -1030,11 +1091,27 @@ def _try_native_ffmpeg_final_render(
 
     # Current Pingoo Telegram workflow uses no BGM.
     # Keep MoviePy for BGM jobs so existing behaviour is preserved.
-    if bgm_service.should_use_bgm(
-        params.bgm_type,
-        params.bgm_volume,
-    ):
+    bgm_type_value = getattr(
+        getattr(params, "bgm_type", ""),
+        "value",
+        getattr(params, "bgm_type", ""),
+    )
+    bgm_type_value = str(
+        bgm_type_value or ""
+    ).strip().lower()
+
+    # Pingoo Telegram currently sends bgm_type="none".
+    # That must use the native FFmpeg fast path.
+    if bgm_type_value not in ("", "none"):
+        logger.info(
+            "Pingoo native FFmpeg skipped: "
+            f"bgm_type={bgm_type_value}"
+        )
         return False
+
+    logger.info(
+        "Pingoo native FFmpeg fast path selected"
+    )
 
     ffmpeg = utils.get_ffmpeg_binary()
 
