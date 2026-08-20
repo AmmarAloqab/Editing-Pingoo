@@ -63,6 +63,13 @@ RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
     fi
 
 # Now copy the rest of the codebase into the image
+# Pingoo Arabic subtitle fonts
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        fonts-noto-core \
+        fontconfig && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 # Expose the port the app runs on

@@ -1068,6 +1068,237 @@ def _escape_ffmpeg_subtitle_path(path):
     )
 
 
+
+# PINGOO_TWO_LINE_ASS_V1
+def _pingoo_srt_time(value: str) -> float:
+    hours, minutes, rest = value.strip().split(":")
+    seconds, millis = rest.replace(".", ",").split(",")
+
+    return (
+        int(hours) * 3600
+        + int(minutes) * 60
+        + int(seconds)
+        + int(millis) / 1000.0
+    )
+
+
+def _pingoo_ass_time(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+
+    return f"{hours}:{minutes:02d}:{secs:05.2f}"
+
+
+def _pingoo_wrap_two_lines(text: str, max_chars: int = 34):
+    """
+    Split subtitle text into chunks.
+    Every returned chunk contains at most TWO lines.
+    """
+
+    text = " ".join(
+        str(text or "")
+        .replace("\\N", " ")
+        .replace("\n", " ")
+        .split()
+    )
+
+    if not text:
+        return []
+
+    words = text.split()
+    result = []
+
+    while words:
+        lines = []
+
+        for _ in range(2):
+            if not words:
+                break
+
+            line = []
+
+            while words:
+                candidate = " ".join(line + [words[0]])
+
+                if line and len(candidate) > max_chars:
+                    break
+
+                line.append(words.pop(0))
+
+                if len(" ".join(line)) >= max_chars:
+                    break
+
+            if line:
+                lines.append(" ".join(line))
+
+        if lines:
+            result.append(r"\N".join(lines))
+
+    return result
+
+
+def _pingoo_build_ass_from_srt(
+    subtitle_path: str,
+    output_dir: str,
+) -> str:
+    """
+    Convert SRT to a controlled 1080x1920 ASS subtitle file.
+
+    Guarantees:
+    - maximum two lines on screen
+    - official Arabic font
+    - predictable font size
+    - safe lower-screen position
+    """
+
+    import re as _re
+
+    source = open(
+        subtitle_path,
+        "r",
+        encoding="utf-8-sig",
+    ).read()
+
+    blocks = _re.split(
+        r"\n\s*\n",
+        source.strip(),
+    )
+
+    events = []
+
+    for block in blocks:
+        lines = [
+            x.strip()
+            for x in block.splitlines()
+            if x.strip()
+        ]
+
+        if not lines:
+            continue
+
+        time_index = next(
+            (
+                i
+                for i, line in enumerate(lines)
+                if "-->" in line
+            ),
+            None,
+        )
+
+        if time_index is None:
+            continue
+
+        try:
+            start_raw, end_raw = [
+                x.strip()
+                for x in lines[time_index].split("-->")
+            ]
+
+            start = _pingoo_srt_time(start_raw)
+            end = _pingoo_srt_time(end_raw)
+
+        except Exception:
+            continue
+
+        text = " ".join(
+            lines[time_index + 1:]
+        )
+
+        chunks = _pingoo_wrap_two_lines(
+            text,
+            max_chars=34,
+        )
+
+        if not chunks:
+            continue
+
+        duration = max(
+            0.25,
+            end - start,
+        )
+
+        weights = [
+            max(
+                1,
+                len(
+                    chunk.replace(r"\N", "")
+                ),
+            )
+            for chunk in chunks
+        ]
+
+        total_weight = sum(weights)
+        cursor = start
+
+        for index, chunk in enumerate(chunks):
+            if index == len(chunks) - 1:
+                chunk_end = end
+            else:
+                share = (
+                    duration
+                    * weights[index]
+                    / total_weight
+                )
+
+                chunk_end = min(
+                    end,
+                    cursor + share,
+                )
+
+            safe_text = (
+                chunk
+                .replace("{", r"\{")
+                .replace("}", r"\}")
+            )
+
+            events.append(
+                "Dialogue: 0,"
+                f"{_pingoo_ass_time(cursor)},"
+                f"{_pingoo_ass_time(chunk_end)},"
+                "Arabic,,0,0,0,,"
+                f"{safe_text}"
+            )
+
+            cursor = chunk_end
+
+    ass_path = os.path.join(
+        output_dir,
+        "subtitle-pingoo.ass",
+    )
+
+    ass_content = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Arabic,Noto Sans Arabic,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,2,100,100,165,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+"""
+
+    with open(
+        ass_path,
+        "w",
+        encoding="utf-8",
+    ) as fp:
+        fp.write(
+            ass_content
+            + "\n".join(events)
+            + "\n"
+        )
+
+    return ass_path
+
+
+
 def _try_native_ffmpeg_final_render(
     video_path,
     audio_path,
@@ -1162,117 +1393,22 @@ def _try_native_ffmpeg_final_render(
     ]
 
     if subtitle_path and os.path.exists(subtitle_path):
-        aspect = VideoAspect(params.video_aspect)
-        _, video_height = aspect.to_resolution()
-
-        # libass interprets ASS font sizes differently from MoviePy.
-        # 60 becomes excessively large on a 1080x1920 vertical video.
-        # Use a stable social-media subtitle size for the native FFmpeg path.
-        font_size = 20
-
-        stroke_width = max(
-            0,
-            int(params.stroke_width or 0),
+        ass_path = _pingoo_build_ass_from_srt(
+            subtitle_path=subtitle_path,
+            output_dir=os.path.dirname(output_file),
         )
 
-        fore_color = _ass_color(
-            params.text_fore_color,
-            "#FFFFFF",
-        )
-
-        stroke_color = _ass_color(
-            params.stroke_color,
-            "#000000",
-        )
-
-        bg_value = params.text_background_color
-
-        if isinstance(bg_value, bool):
-            background_enabled = bg_value
-            bg_color = "#000000"
-        else:
-            background_enabled = bool(bg_value)
-            bg_color = str(
-                bg_value or "#000000"
-            )
-
-        position = str(
-            params.subtitle_position or "bottom"
-        ).lower()
-
-        if position == "top":
-            alignment = 8
-            margin_v = 70
-
-        elif position == "center":
-            alignment = 5
-            margin_v = 0
-
-        elif position == "custom":
-            try:
-                percentage = float(
-                    params.custom_position
-                )
-            except Exception:
-                percentage = 70.0
-
-            percentage = max(
-                0.0,
-                min(100.0, percentage),
-            )
-
-            alignment = 2
-            margin_v = max(
-                20,
-                int(
-                    video_height
-                    * (1.0 - percentage / 100.0)
-                ),
-            )
-
-        else:
-            # Bottom-center with enough space for TikTok/Reels UI.
-            alignment = 2
-            margin_v = 120
-
-        border_style = (
-            3 if background_enabled else 1
-        )
-
-        back_color = _ass_color(
-            bg_color,
-            "#000000",
-        )
-
-        style = ",".join([
-            "FontName=DejaVu Sans",
-            f"FontSize={font_size}",
-            f"PrimaryColour={fore_color}",
-            f"OutlineColour={stroke_color}",
-            f"BackColour={back_color}",
-            f"BorderStyle={border_style}",
-            f"Outline={stroke_width}",
-            "Shadow=0",
-            f"Alignment={alignment}",
-            f"MarginV={margin_v}",
-            "MarginL=90",
-            "MarginR=90",
-            "WrapStyle=0",
-        ])
-
-        subtitle_file = (
+        escaped_ass = (
             _escape_ffmpeg_subtitle_path(
-                subtitle_path
+                ass_path
             )
         )
 
         vf = (
-            "subtitles="
-            f"filename='{subtitle_file}':"
-            "charenc=UTF-8:"
+            "ass="
+            f"filename='{escaped_ass}':"
             "fontsdir="
-            "'/usr/share/fonts/truetype/dejavu':"
-            f"force_style='{style}'"
+            "'/usr/share/fonts/truetype/noto'"
         )
 
         command.extend([
