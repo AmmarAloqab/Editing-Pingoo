@@ -1165,10 +1165,10 @@ def _try_native_ffmpeg_final_render(
         aspect = VideoAspect(params.video_aspect)
         _, video_height = aspect.to_resolution()
 
-        font_size = max(
-            18,
-            int(params.font_size or 60),
-        )
+        # libass interprets ASS font sizes differently from MoviePy.
+        # 60 becomes excessively large on a 1080x1920 vertical video.
+        # Use a stable social-media subtitle size for the native FFmpeg path.
+        font_size = 20
 
         stroke_width = max(
             0,
@@ -1231,8 +1231,9 @@ def _try_native_ffmpeg_final_render(
             )
 
         else:
+            # Bottom-center with enough space for TikTok/Reels UI.
             alignment = 2
-            margin_v = 70
+            margin_v = 120
 
         border_style = (
             3 if background_enabled else 1
@@ -1254,8 +1255,9 @@ def _try_native_ffmpeg_final_render(
             "Shadow=0",
             f"Alignment={alignment}",
             f"MarginV={margin_v}",
-            "MarginL=60",
-            "MarginR=60",
+            "MarginL=90",
+            "MarginR=90",
+            "WrapStyle=0",
         ])
 
         subtitle_file = (
