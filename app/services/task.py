@@ -564,6 +564,36 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
 
 
 def get_video_materials(task_id, params, video_terms, audio_duration):
+    # PINGOO_SUPPLEMENTAL_MATERIALS_V1
+    # User-uploaded photos/videos strengthen the normal provider results.
+    supplemental_paths = []
+
+    supplemental_materials = (
+        getattr(params, "supplemental_materials", None)
+        or []
+    )
+
+    if supplemental_materials:
+        logger.info(
+            f"\\n\\n## preprocess supplemental user materials: "
+            f"{len(supplemental_materials)}"
+        )
+
+        prepared_supplemental = video.preprocess_video(
+            materials=supplemental_materials,
+            clip_duration=params.video_clip_duration,
+        )
+
+        supplemental_paths = [
+            material_info.url
+            for material_info in prepared_supplemental
+            if material_info.url
+        ]
+
+        logger.info(
+            f"supplemental user materials ready: "
+            f"{len(supplemental_paths)}"
+        )
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -576,7 +606,12 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
                 "no valid local video materials were found",
             )
             return None
-        return [material_info.url for material_info in materials]
+        local_paths = [
+            material_info.url
+            for material_info in materials
+        ]
+
+        return supplemental_paths + local_paths
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
         # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
@@ -595,13 +630,67 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             max_clip_duration=params.video_clip_duration,
             match_script_order=params.match_materials_to_script,
         )
-        if not downloaded_videos:
+        if not downloaded_videos and not supplemental_paths:
             _mark_task_failed(
                 task_id,
                 "materials",
                 f"failed to download video materials from {params.video_source}",
             )
             return None
+
+        if supplemental_paths:
+            # Spread user materials across the timeline instead of
+            # placing every uploaded file at the beginning.
+            remote_paths = list(downloaded_videos or [])
+
+            if not remote_paths:
+                downloaded_videos = supplemental_paths
+            else:
+                merged_paths = []
+
+                insert_every = max(
+                    1,
+                    len(remote_paths)
+                    // (len(supplemental_paths) + 1),
+                )
+
+                supplemental_index = 0
+
+                for remote_index, remote_path in enumerate(
+                    remote_paths,
+                    start=1,
+                ):
+                    merged_paths.append(remote_path)
+
+                    if (
+                        supplemental_index < len(supplemental_paths)
+                        and remote_index % insert_every == 0
+                    ):
+                        merged_paths.append(
+                            supplemental_paths[
+                                supplemental_index
+                            ]
+                        )
+                        supplemental_index += 1
+
+                while supplemental_index < len(
+                    supplemental_paths
+                ):
+                    merged_paths.append(
+                        supplemental_paths[
+                            supplemental_index
+                        ]
+                    )
+                    supplemental_index += 1
+
+                downloaded_videos = merged_paths
+
+            logger.info(
+                "Pingoo supplemental materials merged: "
+                f"user={len(supplemental_paths)}, "
+                f"total={len(downloaded_videos)}"
+            )
+
         return downloaded_videos
 
 

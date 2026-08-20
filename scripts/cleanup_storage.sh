@@ -19,3 +19,14 @@ find "$ROOT" \
   >> "$LOG" 2>&1
 
 echo "=== $(date -Is) cleanup done ===" >> "$LOG"
+
+
+# PINGOO_TELEGRAM_MATERIAL_CLEANUP
+# Only Telegram supplemental files use the tg-* prefix.
+find /opt/MoneyPrinterTurbo/storage/local_videos \
+  -maxdepth 1 \
+  -type f \
+  -name 'tg-*' \
+  -mmin +1440 \
+  -delete 2>/dev/null || true
+
