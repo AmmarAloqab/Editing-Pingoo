@@ -639,20 +639,40 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             return None
 
         if supplemental_paths:
-            # Spread user materials across the timeline instead of
-            # placing every uploaded file at the beginning.
+            # PINGOO_USER_MATERIAL_PRIORITY_V2
+            # Always expose the first user-supplied item early,
+            # then distribute the remaining items across Pexels.
             remote_paths = list(downloaded_videos or [])
 
             if not remote_paths:
-                downloaded_videos = supplemental_paths
-            else:
-                merged_paths = []
-
-                insert_every = max(
-                    1,
-                    len(remote_paths)
-                    // (len(supplemental_paths) + 1),
+                downloaded_videos = list(
+                    supplemental_paths
                 )
+            else:
+                merged_paths = [
+                    supplemental_paths[0]
+                ]
+
+                remaining_user_paths = list(
+                    supplemental_paths[1:]
+                )
+
+                if remaining_user_paths:
+                    insert_every = max(
+                        1,
+                        len(remote_paths)
+                        // (
+                            len(
+                                remaining_user_paths
+                            )
+                            + 1
+                        ),
+                    )
+                else:
+                    insert_every = (
+                        len(remote_paths)
+                        + 1
+                    )
 
                 supplemental_index = 0
 
@@ -660,30 +680,45 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
                     remote_paths,
                     start=1,
                 ):
-                    merged_paths.append(remote_path)
+                    merged_paths.append(
+                        remote_path
+                    )
 
                     if (
-                        supplemental_index < len(supplemental_paths)
-                        and remote_index % insert_every == 0
+                        supplemental_index
+                        < len(
+                            remaining_user_paths
+                        )
+                        and
+                        remote_index
+                        % insert_every
+                        == 0
                     ):
                         merged_paths.append(
-                            supplemental_paths[
+                            remaining_user_paths[
                                 supplemental_index
                             ]
                         )
+
                         supplemental_index += 1
 
-                while supplemental_index < len(
-                    supplemental_paths
+                while (
+                    supplemental_index
+                    < len(
+                        remaining_user_paths
+                    )
                 ):
                     merged_paths.append(
-                        supplemental_paths[
+                        remaining_user_paths[
                             supplemental_index
                         ]
                     )
+
                     supplemental_index += 1
 
-                downloaded_videos = merged_paths
+                downloaded_videos = (
+                    merged_paths
+                )
 
             logger.info(
                 "Pingoo supplemental materials merged: "
