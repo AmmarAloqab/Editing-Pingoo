@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-20T08:02:01.297159Z",
+  "updatedAt": "2026-08-20T08:45:39.271769Z",
   "createdAt": "2026-08-18T09:01:14.139Z",
   "id": "KVK9YFvSdisM0fsN",
   "name": "01 - Pingoo Video Telegram Bot",
@@ -84,7 +84,7 @@
         "url": "http://moneyprinterturbo-api:8080/api/v1/videos",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n\n  video_source: \"pexels\",\n  video_terms:\n    Array.isArray($json.video_terms) && $json.video_terms.length\n      ? $json.video_terms\n      : [$json.video_subject],\n\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n\n  font_name: \"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\",\n\n  video_clip_duration: 5,\n  match_materials_to_script: false,\n\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  video_subject: $json.video_subject,\n  video_script: $json.video_script,\n\n  video_source: \"pexels\",\n  video_terms:\n    Array.isArray($json.video_terms) && $json.video_terms.length\n      ? $json.video_terms\n      : [$json.video_subject],\n\n  video_language: $json.video_language,\n  voice_name: $json.voice_name,\n  video_aspect: $json.video_aspect,\n\n  font_name: \"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\",\n\n  video_clip_duration: 4,\n  match_materials_to_script: true,\n\n  bgm_type: \"none\",\n  video_count: 1\n}) }}",
         "options": {}
       },
       "id": "3ed2f40d-0e15-4229-aa39-b55b8c69b481",
@@ -208,7 +208,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst topic=String(\n  $json.video_subject || ''\n).trim();\n\nconst title=String(\n  $json.video_title || ''\n).trim();\n\nconst providedScript=String(\n  $json.video_script || ''\n).trim();\n\nconst visualStyle=String(\n  $json.visual_style || 'auto'\n).trim().toLowerCase();\n\nif (!topic) {\n  throw new Error('VIDEO_TOPIC_EMPTY');\n}\n\nconst STYLE_SEARCH={\n  realistic:{\n    suffix:'realistic cinematic footage'\n  },\n\n  cartoon:{\n    suffix:'cartoon animation'\n  },\n\n  illustration:{\n    suffix:'motion graphics illustration'\n  },\n\n  '3d':{\n    suffix:'3d animation render'\n  },\n\n  futuristic:{\n    suffix:'futuristic technology cinematic'\n  },\n\n  auto:{\n    suffix:''\n  }\n};\n\nconst styleConfig=\n  STYLE_SEARCH[visualStyle]\n  || STYLE_SEARCH.auto;\n\nconst suffix=styleConfig.suffix;\n\nconst terms=[];\n\nfunction addTerm(value) {\n  const term=String(value || '').trim();\n\n  if (\n    term.length >= 3 &&\n    !terms.includes(term)\n  ) {\n    terms.push(term);\n  }\n}\n\nfunction styledTerm(value) {\n  const base=String(value || '').trim();\n\n  if (!base) {\n    return '';\n  }\n\n  return suffix\n    ? `${base} ${suffix}`\n    : base;\n}\n\naddTerm(styledTerm(title));\naddTerm(styledTerm(topic));\n\nfor (\n  const part of topic.split(\n    /[،,؛;]+|\\s+و(?=[\\u0600-\\u06FF])/u\n  )\n) {\n\n  const clean=\n    part.replace(/^و+/u,'').trim();\n\n  addTerm(\n    styledTerm(clean)\n  );\n}\n\nconst videoTerms=terms.slice(0,5);\n\nif (providedScript) {\n\n  return [{\n    json:{\n      ...$json,\n      video_script:providedScript,\n      video_terms:videoTerms,\n      visual_style:visualStyle,\n      script_mode:'manual'\n    }\n  }];\n}\n\nconst script=\n`اليوم سنتحدث باختصار عن ${topic}.\nسنقدم الفكرة بطريقة سهلة وواضحة تساعدك على فهم أهم النقاط المتعلقة بهذا الموضوع.\nمن المهم النظر إلى ${topic} بصورة عملية، والتركيز على المعلومات الأساسية بدل التفاصيل المعقدة.\nخلال هذا الفيديو سنأخذ نظرة سريعة ومباشرة تساعدك على تكوين فكرة أفضل عن الموضوع.\nإذا وجدت هذه المعلومات مفيدة، يمكنك الاحتفاظ بالفيديو والعودة إليه لاحقاً.\nوالآن دعنا نبدأ مع ${topic}.`;\n\nreturn [{\n  json:{\n    ...$json,\n    video_script:script,\n    video_terms:videoTerms,\n    visual_style:visualStyle,\n    script_mode:'auto'\n  }\n}];\n"
+        "jsCode": "\nconst topic=String(\n  $json.video_subject || ''\n).trim();\n\nconst title=String(\n  $json.video_title || ''\n).trim();\n\nconst providedScript=String(\n  $json.video_script || ''\n).trim();\n\nconst visualStyle=String(\n  $json.visual_style || 'auto'\n).trim().toLowerCase();\n\nif (!topic) {\n  throw new Error('VIDEO_TOPIC_EMPTY');\n}\n\nconst STYLE_SEARCH={\n  realistic:'cinematic realistic footage',\n  cartoon:'cartoon animation',\n  illustration:'motion graphics animated illustration',\n  '3d':'3d animation render',\n  futuristic:'futuristic technology cinematic',\n  auto:''\n};\n\nconst suffix=\n  STYLE_SEARCH[visualStyle]\n  ?? '';\n\nconst script=providedScript || (\n`اليوم سنتحدث باختصار عن ${topic}.\nسنشرح أهم عناصر الموضوع بطريقة واضحة ومباشرة.\nسنشاهد أمثلة تساعد على فهم ${topic} بصورة أفضل.\nوفي النهاية سنلخص أهم النقاط التي يجب تذكرها.`\n);\n\nconst stopWords=new Set([\n  'في','من','على','إلى','الى','عن','مع',\n  'هذا','هذه','ذلك','تلك','هو','هي',\n  'ثم','كما','قد','لقد','يمكن','يكون',\n  'تكون','أن','إن','اذا','إذا','عندما',\n  'بعد','قبل','كل','أو','او','و',\n  'هل','ما','ماذا','لماذا','كيف'\n]);\n\nfunction normalizeWords(text) {\n  return String(text || '')\n    .replace(/[،,؛;:()\"']/g,' ')\n    .replace(/\\s+/g,' ')\n    .trim();\n}\n\nfunction compactScene(text) {\n\n  const normalized=\n    normalizeWords(text);\n\n  if (!normalized) {\n    return '';\n  }\n\n  const words=\n    normalized.split(/\\s+/);\n\n  const meaningful=\n    words.filter(\n      word =>\n        word.length > 1 &&\n        !stopWords.has(word)\n    );\n\n  const chosen=\n    meaningful.length >= 3\n      ? meaningful\n      : words;\n\n  return chosen\n    .slice(0,8)\n    .join(' ');\n}\n\nfunction styledTerm(base) {\n\n  const clean=\n    compactScene(base);\n\n  if (!clean) {\n    return '';\n  }\n\n  return suffix\n    ? `${clean} ${suffix}`\n    : clean;\n}\n\nconst sceneBases=[];\n\nfunction addScene(value) {\n\n  const clean=\n    compactScene(value);\n\n  if (\n    clean.length >= 5 &&\n    !sceneBases.includes(clean)\n  ) {\n    sceneBases.push(clean);\n  }\n}\n\n/*\n * Build search terms in narration order.\n * Each sentence becomes a visual scene concept.\n */\nconst sentences=\n  script\n    .split(/[.!؟\\n]+/u)\n    .map(x => x.trim())\n    .filter(Boolean);\n\nfor (const sentence of sentences) {\n\n  if (sceneBases.length >= 8) {\n    break;\n  }\n\n  const words=\n    normalizeWords(sentence)\n      .split(/\\s+/)\n      .filter(Boolean);\n\n  /*\n   * Long narration sentence:\n   * create chronological visual concepts\n   * instead of one huge search query.\n   */\n  if (words.length > 12) {\n\n    for (\n      let i=0;\n      i<words.length && sceneBases.length<8;\n      i+=8\n    ) {\n      addScene(\n        words.slice(i,i+8).join(' ')\n      );\n    }\n\n  } else {\n\n    addScene(sentence);\n  }\n}\n\n/*\n * Fallback concepts if the script is very short.\n */\nif (sceneBases.length < 4) {\n\n  for (\n    const part of topic.split(\n      /[،,؛;]+|\\s+و(?=[\\u0600-\\u06FF])/u\n    )\n  ) {\n\n    if (sceneBases.length >= 8) {\n      break;\n    }\n\n    addScene(\n      part.replace(/^و+/u,'').trim()\n    );\n  }\n}\n\nif (sceneBases.length < 2) {\n  addScene(title);\n  addScene(topic);\n}\n\nconst videoTerms=[];\n\nfor (const scene of sceneBases) {\n\n  const term=\n    styledTerm(scene);\n\n  if (\n    term &&\n    !videoTerms.includes(term)\n  ) {\n    videoTerms.push(term);\n  }\n\n  if (videoTerms.length >= 8) {\n    break;\n  }\n}\n\nreturn [{\n  json:{\n    ...$json,\n\n    video_script:script,\n    video_terms:videoTerms,\n\n    visual_style:visualStyle,\n\n    script_mode:\n      providedScript\n        ? 'manual'\n        : 'auto'\n  }\n}];\n"
       },
       "id": "69ca4adc-dd8f-48ad-9a79-46c44a11f9b6",
       "name": "Build Fast Script",
@@ -713,12 +713,42 @@
           "video_aspect": "9:16",
           "awaiting": null,
           "created_at": "2026-08-18T14:15:52.476Z",
-          "last_seen_at": "2026-08-19T16:35:58.554Z",
+          "last_seen_at": "2026-08-20T08:17:34.970Z",
           "pending_topic": null,
-          "pending_title": null
+          "pending_title": null,
+          "pending_style": null
         }
       },
       "jobs": [
+        {
+          "telegram_id": "492998632",
+          "chat_id": 492998632,
+          "task_id": "7cd71c15-2bfe-45c7-a0f4-63de295a539e",
+          "topic": "قلة النوم وتأثيرها على الدماغ والطاقة والتركيز والمزاج والجسم",
+          "status": "completed",
+          "progress": 100,
+          "created_at": "2026-08-20T08:17:35.763Z",
+          "state": 1,
+          "failed_stage": null,
+          "error": null,
+          "videos": [
+            "/tasks/7cd71c15-2bfe-45c7-a0f4-63de295a539e/final-1.mp4"
+          ],
+          "combined_videos": [
+            "/tasks/7cd71c15-2bfe-45c7-a0f4-63de295a539e/combined-1.mp4"
+          ],
+          "auto_poll_notice_sent": true,
+          "last_polled_at": "2026-08-20T08:24:15.167Z",
+          "completion_detected_sent": true,
+          "completion_detected_at": "2026-08-20T08:24:15.199Z",
+          "final_video_path": "/tasks/7cd71c15-2bfe-45c7-a0f4-63de295a539e/final-1.mp4",
+          "final_video_url": "http://moneyprinterturbo-api:8080/tasks/7cd71c15-2bfe-45c7-a0f4-63de295a539e/final-1.mp4",
+          "video_captured": true,
+          "video_captured_at": "2026-08-20T08:24:15.354Z",
+          "telegram_video_sent": true,
+          "telegram_video_sent_at": "2026-08-20T08:24:19.434Z",
+          "telegram_video_message_id": 248
+        },
         {
           "telegram_id": "492998632",
           "chat_id": 492998632,
@@ -997,9 +1027,9 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "f8e006cc-d0b8-4e42-a5f3-3a07155cae94",
+  "versionId": "5fc13218-7ed5-4484-9c34-6fb8e74fd636",
   "activeVersionId": null,
-  "versionCounter": 260,
+  "versionCounter": 275,
   "triggerCount": 2,
   "tags": []
 }
