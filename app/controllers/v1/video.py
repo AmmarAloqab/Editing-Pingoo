@@ -39,6 +39,199 @@ from app.utils import file_security, utils
 # router = new_router(dependencies=[Depends(base.verify_token)])
 router = new_router()
 
+
+# PINGOO_CACHE_CLEANUP_V1
+def _pingoo_active_video_render() -> bool:
+    """
+    Refuse manual cache cleanup while an FFmpeg task is actively
+    consuming files from storage. This prevents the Telegram
+    cleanup button from breaking a video that is being rendered.
+    """
+    proc_root = "/proc"
+
+    try:
+        entries = os.scandir(proc_root)
+    except OSError:
+        return False
+
+    with entries:
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+
+            cmdline_path = os.path.join(
+                proc_root,
+                entry.name,
+                "cmdline",
+            )
+
+            try:
+                with open(cmdline_path, "rb") as fp:
+                    cmdline = fp.read().replace(
+                        b"\x00",
+                        b" ",
+                    )
+            except OSError:
+                continue
+
+            lowered = cmdline.lower()
+
+            if (
+                b"ffmpeg" in lowered
+                and (
+                    b"/storage/tasks/" in lowered
+                    or b"moneyprinterturbo/storage/tasks" in lowered
+                )
+            ):
+                return True
+
+    return False
+
+
+def _pingoo_clear_cache_directory(
+    directory: str,
+) -> tuple[int, int]:
+    """
+    Delete regular cache files only.
+    Returns: (deleted file count, freed bytes)
+    """
+
+    if not os.path.isdir(directory):
+        return 0, 0
+
+    deleted = 0
+    freed_bytes = 0
+
+    for root, dirs, files in os.walk(
+        directory,
+        topdown=False,
+        followlinks=False,
+    ):
+        for filename in files:
+            file_path = os.path.join(
+                root,
+                filename,
+            )
+
+            try:
+                stat = os.stat(
+                    file_path,
+                    follow_symlinks=False,
+                )
+
+                size = int(stat.st_size)
+
+                os.unlink(file_path)
+
+                deleted += 1
+                freed_bytes += size
+
+            except FileNotFoundError:
+                continue
+
+            except OSError as exc:
+                logger.warning(
+                    "failed to delete Pingoo cache file: "
+                    f"file={filename}, error={exc}"
+                )
+
+        # Only remove empty subdirectories.
+        # The cache root itself is always preserved.
+        if root != directory:
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+
+    return deleted, freed_bytes
+
+
+@router.post(
+    "/cache/cleanup",
+    summary="Clear Pingoo disposable media caches",
+)
+def cleanup_pingoo_cache(request: Request):
+    """
+    Manual cleanup used by the Telegram bot.
+
+    It intentionally DOES NOT touch:
+    - storage/tasks
+    - storage/local_videos
+    - user supplemental materials
+    - generated videos
+    - Docker data
+    """
+
+    if _pingoo_active_video_render():
+        return utils.get_response(
+            200,
+            {
+                "busy": True,
+                "deleted_files": 0,
+                "freed_bytes": 0,
+                "freed_mb": 0,
+                "message": (
+                    "A video is currently rendering. "
+                    "Cache cleanup was skipped."
+                ),
+            },
+        )
+
+    cache_videos = utils.storage_dir(
+        "cache_videos",
+        create=True,
+    )
+
+    cache_search = utils.storage_dir(
+        "cache_material_search",
+        create=True,
+    )
+
+    video_count, video_bytes = (
+        _pingoo_clear_cache_directory(
+            cache_videos
+        )
+    )
+
+    search_count, search_bytes = (
+        _pingoo_clear_cache_directory(
+            cache_search
+        )
+    )
+
+    deleted_files = (
+        video_count
+        + search_count
+    )
+
+    freed_bytes = (
+        video_bytes
+        + search_bytes
+    )
+
+    logger.info(
+        "Pingoo manual cache cleanup completed: "
+        f"deleted={deleted_files}, "
+        f"freed_bytes={freed_bytes}"
+    )
+
+    return utils.get_response(
+        200,
+        {
+            "busy": False,
+            "deleted_files": deleted_files,
+            "freed_bytes": freed_bytes,
+            "freed_mb": round(
+                freed_bytes / 1024 / 1024,
+                2,
+            ),
+            "video_cache_files": video_count,
+            "search_cache_files": search_count,
+        },
+    )
+
+
+
 _enable_redis = config.app.get("enable_redis", False)
 _redis_host = config.app.get("redis_host", "localhost")
 _redis_port = config.app.get("redis_port", 6379)
