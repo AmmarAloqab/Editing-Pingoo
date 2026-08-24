@@ -31,6 +31,7 @@ Worker:
 ```powershell
 $env:PINGOO_FLOW_WORKER_HOST="<WINDOWS_TAILSCALE_IP>"
 $env:PINGOO_FLOW_WORKER_PORT="8767"
+$env:PINGOO_FLOW_HEADLESS="false"
 $env:PINGOO_UPLOAD_URL="http://<VPS_TAILSCALE_IP>:18080/api/v1/video_materials"
 powershell -ExecutionPolicy Bypass -File .\tools\google_flow_worker\windows_worker.ps1
 ```

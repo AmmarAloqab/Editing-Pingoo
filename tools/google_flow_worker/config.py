@@ -19,6 +19,16 @@ def _default_host() -> str:
     return "172.20.0.1"
 
 
+def _default_headless() -> str:
+    if platform.system().lower() == "windows":
+        return "false"
+    return "true"
+
+
+def _env_bool(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class FlowWorkerConfig:
     base_dir: Path = field(
@@ -54,6 +64,9 @@ class FlowWorkerConfig:
             os.getenv("PINGOO_CHROME_EXECUTABLE")
             or os.getenv("PINGOO_CHROMIUM_EXECUTABLE", "")
         )
+    )
+    headless: bool = field(
+        default_factory=lambda: _env_bool("PINGOO_FLOW_HEADLESS", _default_headless())
     )
 
     def __post_init__(self) -> None:

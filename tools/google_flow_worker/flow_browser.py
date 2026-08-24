@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -14,14 +15,27 @@ from .errors import (
     FlowGenerationTimeout,
     FlowUiChanged,
 )
+from .windows_chrome import find_chrome_executable
 
 
 AUTH_TEXT_MARKERS = (
     "sign in",
     "تسجيل الدخول",
+    "email or phone",
+    "use your google account",
     "captcha",
     "verify it",
     "security check",
+)
+
+FLOW_UI_MARKERS = (
+    "generate",
+    "create",
+    "prompt",
+    "image",
+    "video",
+    "ingredients",
+    "frames",
 )
 
 
@@ -30,57 +44,111 @@ class GoogleFlowBrowser:
         self.config = config
         ensure_runtime_dirs(config)
 
-    def _launch_context(self, headless: bool):
+    def _browser_executable(self) -> str:
+        if self.config.browser_executable:
+            return self.config.browser_executable
+        return find_chrome_executable()
+
+    def _context_kwargs(self, headless: bool | None = None) -> dict:
         kwargs = {
             "user_data_dir": str(self.config.profile_dir),
-            "headless": headless,
+            "headless": self.config.headless if headless is None else headless,
             "accept_downloads": True,
             "downloads_path": str(self.config.downloads_dir),
             "viewport": {"width": 1280, "height": 900},
         }
-        if self.config.browser_executable:
-            kwargs["executable_path"] = self.config.browser_executable
-        return sync_playwright().start(), kwargs
+        executable = self._browser_executable()
+        if executable:
+            kwargs["executable_path"] = executable
+        return kwargs
 
     def status(self) -> dict:
+        context = None
+        page = None
         try:
             with sync_playwright() as playwright:
-                browser_type = playwright.chromium
-                kwargs = {
-                    "user_data_dir": str(self.config.profile_dir),
-                    "headless": True,
-                    "accept_downloads": True,
-                    "downloads_path": str(self.config.downloads_dir),
-                }
-                if self.config.browser_executable:
-                    kwargs["executable_path"] = self.config.browser_executable
-                context = browser_type.launch_persistent_context(**kwargs)
+                context = playwright.chromium.launch_persistent_context(**self._context_kwargs())
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto(self.config.flow_url, wait_until="domcontentloaded", timeout=60000)
-                authenticated = self._is_authenticated(page)
-                title = page.title()
-                url = page.url
-                context.close()
-                return {
-                    "authenticated": authenticated,
-                    "title": title,
-                    "url": url,
-                }
+                return self._classify_page(page)
         except Exception as exc:
             return {
                 "authenticated": False,
+                "error_code": self._status_error_code(exc),
                 "error": type(exc).__name__,
+                "page_title": self._safe_title(page),
+                "current_url": self._safe_url(page),
             }
+        finally:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
 
     def _is_authenticated(self, page) -> bool:
-        text = ""
+        return bool(self._classify_page(page).get("authenticated"))
+
+    def _classify_page(self, page) -> dict:
+        title = self._safe_title(page)
+        url = self._safe_url(page)
+        text = self._safe_body_text(page)
+        host = urlparse(url).netloc.lower()
+
+        if "accounts.google.com" in host or any(marker in text for marker in AUTH_TEXT_MARKERS):
+            return {
+                "authenticated": False,
+                "error_code": "FLOW_LOGIN_PAGE",
+                "page_title": title,
+                "current_url": url,
+            }
+
+        page_signal = f"{title} {url}".lower()
+        has_flow_page = "flow" in page_signal or "labs.google" in host
+        has_flow_ui = any(marker in text for marker in FLOW_UI_MARKERS)
+        if has_flow_page and has_flow_ui:
+            return {
+                "authenticated": True,
+                "error_code": "FLOW_UI_READY",
+                "page_title": title,
+                "current_url": url,
+            }
+
+        return {
+            "authenticated": False,
+            "error_code": "FLOW_UI_UNKNOWN",
+            "page_title": title,
+            "current_url": url,
+        }
+
+    def _safe_body_text(self, page) -> str:
         try:
-            text = page.locator("body").inner_text(timeout=10000).lower()
+            return page.locator("body").inner_text(timeout=10000).lower()
         except Exception:
-            pass
-        if any(marker in text for marker in AUTH_TEXT_MARKERS):
-            return False
-        return "flow" in page.url.lower() or "flow" in page.title().lower()
+            return ""
+
+    def _safe_title(self, page) -> str:
+        if not page:
+            return ""
+        try:
+            return page.title()
+        except Exception:
+            return ""
+
+    def _safe_url(self, page) -> str:
+        if not page:
+            return ""
+        try:
+            return page.url
+        except Exception:
+            return ""
+
+    def _status_error_code(self, exc: Exception) -> str:
+        if type(exc).__name__ == "Error":
+            return "FLOW_BROWSER_ERROR"
+        if isinstance(exc, PlaywrightTimeoutError):
+            return "FLOW_STATUS_TIMEOUT"
+        return "FLOW_STATUS_ERROR"
 
     def assert_authenticated(self) -> None:
         status = self.status()
@@ -98,16 +166,7 @@ class GoogleFlowBrowser:
         started = time.monotonic()
         timeout_ms = self.config.generation_timeout_seconds * 1000
         with sync_playwright() as playwright:
-            kwargs = {
-                "user_data_dir": str(self.config.profile_dir),
-                "headless": True,
-                "accept_downloads": True,
-                "downloads_path": str(self.config.downloads_dir),
-                "viewport": {"width": 1280, "height": 900},
-            }
-            if self.config.browser_executable:
-                kwargs["executable_path"] = self.config.browser_executable
-            context = playwright.chromium.launch_persistent_context(**kwargs)
+            context = playwright.chromium.launch_persistent_context(**self._context_kwargs())
             page = context.pages[0] if context.pages else context.new_page()
             try:
                 page.goto(self.config.flow_url, wait_until="domcontentloaded", timeout=60000)

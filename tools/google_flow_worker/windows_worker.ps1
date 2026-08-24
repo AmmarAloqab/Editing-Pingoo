@@ -13,5 +13,8 @@ if (-not $env:PINGOO_FLOW_WORKER_HOST) {
 
 $env:PYTHONPATH = $RepoDir
 $env:PINGOO_FLOW_BASE_DIR = $BaseDir
+if (-not $env:PINGOO_FLOW_HEADLESS) {
+  $env:PINGOO_FLOW_HEADLESS = "false"
+}
 
 & (Join-Path $BaseDir "venv\Scripts\python.exe") -m tools.google_flow_worker.worker
