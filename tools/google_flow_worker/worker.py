@@ -35,6 +35,11 @@ def flow_status():
     return GoogleFlowBrowser(config).status()
 
 
+@app.get("/flow/diagnostics")
+def flow_diagnostics():
+    return GoogleFlowBrowser(config).diagnostics()
+
+
 @app.post("/flow/generate")
 def flow_generate(request: FlowGenerateRequest):
     started = time.monotonic()

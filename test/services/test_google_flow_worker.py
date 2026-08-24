@@ -10,7 +10,7 @@ from tools.google_flow_worker.planner import (
     build_flow_prompt,
     select_auto_flow_candidates,
 )
-from tools.google_flow_worker.worker import FlowGenerateRequest, flow_generate
+from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate
 from tools.google_flow_worker.config import get_config
 
 
@@ -117,6 +117,21 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
             upload.assert_called_once()
             self.assertFalse(path.exists())
 
+    def test_diagnostics_endpoint_returns_safe_fields(self):
+        expected = {
+            "url": "https://labs.google/fx/tools/flow",
+            "title": "Google Flow",
+            "has_google_account_button": False,
+            "has_sign_in": False,
+            "detected_flow_controls": ["new project"],
+        }
+        with patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls:
+            browser_cls.return_value.diagnostics.return_value = expected
+
+            result = flow_diagnostics()
+
+        self.assertEqual(result, expected)
+
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
     @patch.dict("os.environ", {"LOCALAPPDATA": r"C:\Users\me\AppData\Local"}, clear=True)
@@ -150,10 +165,70 @@ class GoogleFlowWorkerWindowsTest(unittest.TestCase):
         result = GoogleFlowBrowser(config)._classify_page(Page())
 
         self.assertFalse(result["authenticated"])
-        self.assertEqual(result["error_code"], "FLOW_LOGIN_PAGE")
+        self.assertEqual(result["error_code"], "AUTH_REQUIRED")
         self.assertEqual(result["page_title"], "Sign in - Google Accounts")
         self.assertEqual(result["current_url"], "https://accounts.google.com/signin")
         self.assertNotIn("Email or phone", result.values())
+
+    def test_current_flow_controls_authenticate_without_sign_in(self):
+        class Page:
+            url = "https://labs.google/fx/tools/flow"
+
+            def title(self):
+                return "Google Flow - AI Creative Studio for Video, Images & Custom Tools"
+
+            def locator(self, _selector):
+                body = Mock()
+                body.inner_text.return_value = ""
+                return body
+
+        config = FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test")
+        browser = GoogleFlowBrowser(config)
+        with patch.object(
+            browser,
+            "_page_diagnostics",
+            return_value={
+                "url": "https://labs.google/fx/tools/flow",
+                "title": "Google Flow - AI Creative Studio for Video, Images & Custom Tools",
+                "has_google_account_button": False,
+                "has_sign_in": False,
+                "detected_flow_controls": ["new project", "edit project"],
+            },
+        ):
+            result = browser._classify_page(Page())
+
+        self.assertTrue(result["authenticated"])
+        self.assertEqual(result["error_code"], "FLOW_UI_READY")
+
+    def test_sign_in_button_requires_auth_without_avatar(self):
+        class Page:
+            url = "https://labs.google/fx/tools/flow"
+
+            def title(self):
+                return "Google Flow"
+
+            def locator(self, _selector):
+                body = Mock()
+                body.inner_text.return_value = ""
+                return body
+
+        config = FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test")
+        browser = GoogleFlowBrowser(config)
+        with patch.object(
+            browser,
+            "_page_diagnostics",
+            return_value={
+                "url": "https://labs.google/fx/tools/flow",
+                "title": "Google Flow",
+                "has_google_account_button": False,
+                "has_sign_in": True,
+                "detected_flow_controls": [],
+            },
+        ):
+            result = browser._classify_page(Page())
+
+        self.assertFalse(result["authenticated"])
+        self.assertEqual(result["error_code"], "AUTH_REQUIRED")
 
     @patch(
         "tools.google_flow_worker.flow_browser.find_chrome_executable",
