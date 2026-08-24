@@ -75,6 +75,18 @@ _VIDEO_MUSIC_PROVIDERS = {
     },
 }
 
+_MATERIAL_SOURCE_MODES = {
+    "auto",
+    "user_pexels",
+    "flow_user_pexels",
+    "pexels_only",
+}
+
+
+def _material_source_mode(params) -> str:
+    mode = str(getattr(params, "material_source_mode", "auto") or "auto").strip()
+    return mode if mode in _MATERIAL_SOURCE_MODES else "auto"
+
 
 def _get_video_music_prompt(params: VideoParams) -> str:
     """
@@ -669,7 +681,20 @@ def _route_scene_materials(
     # PINGOO_SCENE_MATERIAL_ROUTER_V1
     # V1 keeps user materials in upload order, then downloads one provider
     # material per remaining scene using that scene's visual_query.
+    material_source_mode = _material_source_mode(params)
+    use_flow = material_source_mode in {"auto", "flow_user_pexels"}
+    use_user = material_source_mode in {
+        "auto",
+        "user_pexels",
+        "flow_user_pexels",
+    }
     flow_paths_by_scene = flow_paths_by_scene or {}
+    if not use_flow:
+        flow_paths_by_scene = {}
+    if not use_user:
+        supplemental_paths = []
+
+    logger.info(f"PINGOO_SOURCE_MODE: mode={material_source_mode}")
     logger.info(
         "PINGOO_SCENE_MATERIAL_ROUTER_V1 enabled: "
         f"scenes={len(scene_manifest)}, user_materials={len(supplemental_paths)}, "
@@ -807,14 +832,20 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
     # User-uploaded photos/videos strengthen the normal provider results.
     supplemental_paths = []
 
+    material_source_mode = _material_source_mode(params)
     supplemental_materials = (
         getattr(params, "supplemental_materials", None)
         or []
     )
-    flow_paths_by_scene = _prepare_flow_materials_by_scene(
-        task_id,
-        params,
-    )
+    if material_source_mode == "pexels_only":
+        supplemental_materials = []
+
+    flow_paths_by_scene = {}
+    if material_source_mode in {"auto", "flow_user_pexels"}:
+        flow_paths_by_scene = _prepare_flow_materials_by_scene(
+            task_id,
+            params,
+        )
 
     if supplemental_materials:
         logger.info(

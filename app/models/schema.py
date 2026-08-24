@@ -108,6 +108,7 @@ class VideoParams(BaseModel):
     # These supplement the online provider instead of replacing it.
     supplemental_materials: Optional[List[MaterialInfo]] = None
     flow_materials: Optional[List[MaterialInfo]] = None
+    material_source_mode: str = "auto"
     scene_manifest: Optional[List[SceneManifestItem]] = None
     
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles
