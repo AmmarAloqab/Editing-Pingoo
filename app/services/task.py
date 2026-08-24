@@ -4,9 +4,12 @@ import re
 import socket
 import threading
 import time
+import json
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from functools import partial
 from os import path
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from uuid import uuid4
 
 from loguru import logger
@@ -81,6 +84,7 @@ _MATERIAL_SOURCE_MODES = {
     "flow_user_pexels",
     "pexels_only",
 }
+_DEFAULT_FLOW_WORKER_URL = "http://100.123.55.125:8767"
 
 
 def _material_source_mode(params) -> str:
@@ -349,6 +353,41 @@ def save_script_data(task_id, video_script, video_terms, params):
     task_artifacts.write_script_data(task_id, script_data)
 
 
+def _is_arabic_params(params) -> bool:
+    language = str(getattr(params, "video_language", "") or "").lower()
+    voice_name = str(getattr(params, "voice_name", "") or "").lower()
+    subject = str(getattr(params, "video_subject", "") or "")
+    script = str(getattr(params, "video_script", "") or "")
+    return (
+        language.startswith("ar")
+        or voice_name.startswith("ar-")
+        or bool(re.search(r"[\u0600-\u06ff]", f"{subject}\n{script}"))
+    )
+
+
+def _find_noto_arabic_font() -> str:
+    candidates = [
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoNaskhArabic-Regular.ttf",
+    ]
+    for candidate in candidates:
+        if path.exists(candidate):
+            return candidate
+    return "Noto Sans Arabic"
+
+
+def _apply_arabic_subtitle_defaults(params) -> None:
+    if not _is_arabic_params(params):
+        return
+    params.subtitle_enabled = True
+    params.font_name = _find_noto_arabic_font()
+    params.font_size = 54
+    params.subtitle_position = "custom"
+    params.custom_position = 78.0
+
+
 def resolve_custom_audio_file(task_id: str, custom_audio_file: str | None) -> str:
     requested_file = (custom_audio_file or "").strip()
     if not requested_file:
@@ -586,10 +625,16 @@ def _scene_manifest_items(params) -> list[dict]:
             raw_scene_id = scene.get("scene_id", index)
             visual_query = scene.get("visual_query", "")
             narration = scene.get("narration", "")
+            visual_prompt = scene.get("visual_prompt", "")
+            preferred_source = scene.get("preferred_source", "auto")
+            duration_seconds = scene.get("duration_seconds", 0.0)
         else:
             raw_scene_id = getattr(scene, "scene_id", index)
             visual_query = getattr(scene, "visual_query", "")
             narration = getattr(scene, "narration", "")
+            visual_prompt = getattr(scene, "visual_prompt", "")
+            preferred_source = getattr(scene, "preferred_source", "auto")
+            duration_seconds = getattr(scene, "duration_seconds", 0.0)
 
         try:
             scene_id = int(raw_scene_id)
@@ -601,6 +646,9 @@ def _scene_manifest_items(params) -> list[dict]:
                 "scene_id": scene_id,
                 "visual_query": str(visual_query or "").strip(),
                 "narration": str(narration or "").strip(),
+                "visual_prompt": str(visual_prompt or "").strip(),
+                "preferred_source": str(preferred_source or "auto").strip().lower(),
+                "duration_seconds": float(duration_seconds or 0.0),
             }
         )
 
@@ -671,6 +719,79 @@ def _prepare_flow_materials_by_scene(
     return flow_by_scene
 
 
+def _flow_worker_url() -> str:
+    return str(
+        os.getenv("PINGOO_FLOW_WORKER_URL")
+        or config.app.get("flow_worker_url", "")
+        or _DEFAULT_FLOW_WORKER_URL
+    ).rstrip("/")
+
+
+def _flow_worker_timeout_seconds() -> int:
+    return max(
+        10,
+        int(
+            os.getenv(
+                "PINGOO_FLOW_WORKER_TIMEOUT_SECONDS",
+                str(config.app.get("flow_worker_timeout_seconds", 1800)),
+            )
+        ),
+    )
+
+
+def _max_auto_flow_scenes() -> int:
+    return max(
+        0,
+        int(
+            os.getenv(
+                "MAX_AUTO_FLOW_SCENES",
+                str(config.app.get("max_auto_flow_scenes", 2)),
+            )
+        ),
+    )
+
+
+def _call_flow_worker_for_scene(scene: dict, params) -> str:
+    worker_url = _flow_worker_url()
+    if not worker_url:
+        return ""
+
+    prompt = (
+        scene.get("visual_prompt")
+        or scene.get("visual_query")
+        or scene.get("narration")
+        or ""
+    )
+    prompt = str(prompt).strip()
+    if not prompt:
+        return ""
+
+    payload = {
+        "scene_id": scene["scene_id"],
+        "prompt": prompt,
+        "aspect_ratio": str(getattr(params, "video_aspect", "9:16") or "9:16"),
+        "media_type": "video",
+    }
+    request = urlrequest.Request(
+        f"{worker_url}/flow/generate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlrequest.urlopen(request, timeout=_flow_worker_timeout_seconds()) as response:
+        body = response.read().decode("utf-8")
+
+    data = json.loads(body)
+    if not data.get("ok"):
+        logger.warning(
+            "PINGOO_FLOW_WORKER: generation failed, "
+            f"scene={scene['scene_id']}, error={data.get('error')}"
+        )
+        return ""
+
+    return str(data.get("material_url") or "").strip()
+
+
 def _route_scene_materials(
     task_id,
     params,
@@ -704,6 +825,8 @@ def _route_scene_materials(
     material_paths = []
     assignments = []
     used_user_materials = 0
+    generated_flow_scenes = 0
+    max_flow_scenes = _max_auto_flow_scenes()
     scene_ids = {scene["scene_id"] for scene in scene_manifest}
     for scene_id in sorted(flow_paths_by_scene):
         if scene_id not in scene_ids:
@@ -715,6 +838,7 @@ def _route_scene_materials(
     for index, scene in enumerate(scene_manifest):
         scene_id = scene["scene_id"]
         query = scene["visual_query"]
+        preferred_source = str(scene.get("preferred_source", "auto") or "auto").lower()
 
         if scene_id in flow_paths_by_scene:
             material_path = flow_paths_by_scene[scene_id]
@@ -733,6 +857,39 @@ def _route_scene_materials(
                 f"scene={scene_id} source=flow"
             )
             continue
+
+        if (
+            material_source_mode == "flow_user_pexels"
+            and preferred_source == "flow"
+            and generated_flow_scenes < max_flow_scenes
+        ):
+            try:
+                material_path = _call_flow_worker_for_scene(scene, params)
+            except (OSError, urlerror.URLError, TimeoutError, ValueError) as exc:
+                logger.warning(
+                    "PINGOO_FLOW_WORKER: request failed, "
+                    f"scene={scene_id}, error={type(exc).__name__}"
+                )
+                material_path = ""
+
+            if material_path:
+                generated_flow_scenes += 1
+                material_paths.append(material_path)
+                assignments.append(
+                    {
+                        "scene_id": scene_id,
+                        "source": "flow",
+                        "material": material_path,
+                        "query": query,
+                        "status": "assigned",
+                        "generated": True,
+                    }
+                )
+                logger.info(
+                    "PINGOO_SCENE_ROUTER: "
+                    f"scene={scene_id} source=flow generated=true"
+                )
+                continue
 
         if used_user_materials < len(supplemental_paths):
             material_path = supplemental_paths[used_user_materials]
@@ -1514,6 +1671,8 @@ def _run_pipeline(
             else "failed to generate video script"
         )
         return _mark_task_failed(task_id, "script", error)
+    params.video_script = video_script
+    _apply_arabic_subtitle_defaults(params)
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=10)
 

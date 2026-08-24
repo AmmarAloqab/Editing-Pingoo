@@ -17,6 +17,13 @@ def _scene(scene_id: int, query: str) -> dict:
     }
 
 
+def _flow_scene(scene_id: int, query: str) -> dict:
+    scene = _scene(scene_id, query)
+    scene["preferred_source"] = "flow"
+    scene["visual_prompt"] = f"flow prompt {scene_id}"
+    return scene
+
+
 class SceneMaterialRouterTest(unittest.TestCase):
     def test_prioritizes_ordered_user_materials(self):
         calls = []
@@ -379,6 +386,110 @@ class SceneMaterialRouterTest(unittest.TestCase):
         self.assertEqual(
             [item["source"] for item in assignments["scene_material_assignments"]],
             ["user", "flow"],
+        )
+
+    def test_flow_user_pexels_calls_worker_before_pexels(self):
+        calls = []
+        assignments = {}
+
+        def fake_flow(scene, params):
+            calls.append(("flow", scene["scene_id"], scene["visual_prompt"]))
+            return f"flow-generated-{scene['scene_id']}.mp4"
+
+        def fake_download_videos(**kwargs):
+            calls.append(("pexels", kwargs["search_terms"][0]))
+            return [f"/tmp/{kwargs['search_terms'][0]}.mp4"]
+
+        params = VideoParams(
+            video_subject="bitcoin",
+            video_terms=[],
+            video_source="pexels",
+            video_clip_duration=4,
+            match_materials_to_script=True,
+            material_source_mode="flow_user_pexels",
+            scene_manifest=[
+                _flow_scene(1, "Bitcoin global network"),
+                _scene(2, "Bitcoin mining data center"),
+            ],
+        )
+
+        with (
+            patch.object(task, "_call_flow_worker_for_scene", fake_flow),
+            patch.object(task, "_max_auto_flow_scenes", lambda: 2),
+            patch.object(task.material, "download_videos", fake_download_videos),
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **updates: assignments.update(updates) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "flow-first-test",
+                params,
+                params.video_terms,
+                20,
+            )
+
+        self.assertEqual(result[0], "flow-generated-1.mp4")
+        self.assertEqual(calls[0][0], "flow")
+        self.assertEqual(calls[1][0], "pexels")
+        self.assertEqual(
+            [item["source"] for item in assignments["scene_material_assignments"]],
+            ["flow", "pexels"],
+        )
+
+    def test_flow_worker_failure_falls_back_to_user_then_pexels(self):
+        calls = []
+        assignments = {}
+
+        def fake_flow(scene, params):
+            calls.append(("flow", scene["scene_id"]))
+            return ""
+
+        def fake_download_videos(**kwargs):
+            calls.append(("pexels", kwargs["search_terms"][0]))
+            return ["/tmp/fallback.mp4"]
+
+        params = VideoParams(
+            video_subject="bitcoin",
+            video_terms=[],
+            video_source="pexels",
+            video_clip_duration=4,
+            match_materials_to_script=True,
+            material_source_mode="flow_user_pexels",
+            supplemental_materials=[
+                MaterialInfo(provider="local", url="user-1.mp4"),
+            ],
+            scene_manifest=[
+                _flow_scene(1, "Bitcoin global network"),
+                _scene(2, "Bitcoin mining data center"),
+            ],
+        )
+
+        with (
+            patch.object(task.video, "preprocess_video", lambda materials, clip_duration: materials),
+            patch.object(task, "_call_flow_worker_for_scene", fake_flow),
+            patch.object(task, "_max_auto_flow_scenes", lambda: 2),
+            patch.object(task.material, "download_videos", fake_download_videos),
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **updates: assignments.update(updates) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "flow-fallback-test",
+                params,
+                params.video_terms,
+                20,
+            )
+
+        self.assertEqual(result, ["user-1.mp4", "/tmp/fallback.mp4"])
+        self.assertEqual(calls[0][0], "flow")
+        self.assertEqual(calls[1][0], "pexels")
+        self.assertEqual(
+            [item["source"] for item in assignments["scene_material_assignments"]],
+            ["user", "pexels"],
         )
 
 

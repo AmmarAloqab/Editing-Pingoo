@@ -698,6 +698,59 @@ class TestTaskService(unittest.TestCase):
         whisper_create.assert_not_called()
         whisper_correct.assert_not_called()
 
+    def test_arabic_defaults_force_noto_font_and_subtitles(self):
+        params = VideoParams(
+            video_subject="كيف يعمل البيتكوين؟",
+            video_script="شرح عربي قصير عن البيتكوين.",
+            video_language="ar-SA",
+            voice_name="ar-SA-HamedNeural",
+            subtitle_enabled=False,
+            font_name="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            font_size=60,
+        )
+
+        with patch.object(tm, "_find_noto_arabic_font", return_value="/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"):
+            tm._apply_arabic_subtitle_defaults(params)
+
+        self.assertTrue(params.subtitle_enabled)
+        self.assertEqual(params.font_name, "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf")
+        self.assertEqual(params.font_size, 54)
+        self.assertEqual(params.subtitle_position, "custom")
+        self.assertEqual(params.custom_position, 78.0)
+
+    def test_arabic_subtitle_path_is_non_empty_when_edge_writes_file(self):
+        task_id = "test-arabic-subtitle-path"
+        task_dir = utils.task_dir(task_id)
+        params = VideoParams(
+            video_subject="كيف يعمل البيتكوين؟",
+            video_script="شرح عربي قصير.",
+            video_language="ar-SA",
+            subtitle_enabled=True,
+        )
+
+        def fake_create_subtitle(text, sub_maker, subtitle_file):
+            Path(subtitle_file).write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nشرح عربي قصير.\n\n",
+                encoding="utf-8",
+            )
+
+        try:
+            with (
+                patch.object(tm.config, "app", dict(tm.config.app, subtitle_provider="edge")),
+                patch.object(tm.voice, "create_subtitle", side_effect=fake_create_subtitle),
+            ):
+                subtitle_path = tm.generate_subtitle(
+                    task_id=task_id,
+                    params=params,
+                    video_script="شرح عربي قصير.",
+                    sub_maker=object(),
+                    audio_file=os.path.join(task_dir, "audio.mp3"),
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertTrue(subtitle_path.endswith("subtitle.srt"))
+
     def test_start_returns_each_intermediate_result(self):
         """
         API 的 script、terms、audio、subtitle 和 materials 模式共用同一条任务
