@@ -595,5 +595,46 @@ class SceneMaterialRouterTest(unittest.TestCase):
         )
 
 
+    def test_material_provenance_survives_scene_routing(self):
+        updates = {}
+
+        params = VideoParams(
+            video_subject="gravity",
+            video_terms=[],
+            video_source="pexels",
+            video_clip_duration=4,
+            match_materials_to_script=True,
+            material_source_mode="flow_user_pexels",
+            scene_manifest=[
+                _flow_scene(1, "city losing gravity"),
+                _scene(2, "ocean water floating"),
+            ],
+        )
+
+        with (
+            patch.object(task, "_call_flow_worker_for_scene", return_value="flow-1.mp4"),
+            patch.object(task, "_max_auto_flow_scenes", lambda: 2),
+            patch.object(task.material, "download_videos", return_value=["pexels-2.mp4"]),
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **kwargs: updates.update(kwargs) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "provenance-router-test",
+                params,
+                params.video_terms,
+                20,
+            )
+
+        self.assertEqual(result, ["flow-1.mp4", "pexels-2.mp4"])
+        provenance = updates["material_provenance"]
+        self.assertEqual(provenance[0]["source"], "flow")
+        self.assertEqual(provenance[0]["local_path"], "flow-1.mp4")
+        self.assertFalse(provenance[0]["used_in_final_render"])
+        self.assertEqual(provenance[1]["source"], "pexels")
+
+
 if __name__ == "__main__":
     unittest.main()

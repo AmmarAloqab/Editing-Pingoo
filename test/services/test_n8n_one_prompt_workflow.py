@@ -68,6 +68,20 @@ class N8nOnePromptWorkflowTest(unittest.TestCase):
         self.assertIn("font_size: 54", body)
         self.assertNotIn("DejaVuSans.ttf", body)
 
+    def test_create_task_body_sends_target_duration_seconds(self):
+        body = _node("Create MoneyPrinterTurbo Task")["parameters"]["jsonBody"]
+
+        self.assertIn("target_duration_seconds: Number($json.target_duration_seconds || 0)", body)
+
+    def test_gravity_one_prompt_uses_current_flow_scene_plan(self):
+        code = _node("Build Fast Script")["parameters"]["jsCode"]
+
+        self.assertIn("function gravityScenes", code)
+        self.assertIn("modern city suddenly losing gravity", code)
+        self.assertIn("People and cars floating above a city street", code)
+        self.assertIn("/جاذبية|الجاذبية|gravity/i.test(requirements.topic)", code)
+        self.assertIn("'flow'", code)
+
     def test_completed_video_delivery_resolves_final_url_and_sends_video(self):
         capture = _node("Capture Final Video")["parameters"]["jsCode"]
         send = _node("Telegram Send Final Video")["parameters"]

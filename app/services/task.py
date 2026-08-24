@@ -758,6 +758,20 @@ def _scene_manifest_items(params) -> list[dict]:
     return normalized_scenes
 
 
+
+def _material_source_asset_id(material_path: str) -> str:
+    raw = str(material_path or "").strip()
+    return path.splitext(path.basename(raw))[0] if raw else ""
+
+
+def _material_provenance_from_assignments(assignments: list[dict]) -> list[dict]:
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return [{"scene_id": item.get("scene_id"), "source": item.get("source"), "source_asset_id": _material_source_asset_id(str(item.get("material") or "")), "local_path": str(item.get("material") or ""), "generated_at": now if item.get("generated") else "", "fallback_reason": item.get("fallback_reason") or "", "used_in_final_render": False} for item in assignments]
+
+
+def _patch_material_provenance(task_id: str, assignments: list[dict]) -> None:
+    task_artifacts.patch_script_data(task_id, material_provenance=_material_provenance_from_assignments(assignments))
+
 def _persist_scene_material_assignments(task_id: str, assignments: list[dict]) -> None:
     try:
         task_artifacts.patch_script_data(
@@ -940,6 +954,7 @@ def _call_flow_worker_for_scene(scene: dict, params) -> str:
         return ""
 
     logger.info(f"PINGOO_FLOW_REQUEST scene={scene['scene_id']}")
+    logger.info(f"PINGOO_FLOW_GENERATION_STARTED scene={scene['scene_id']}")
     payload = {
         "scene_id": scene["scene_id"],
         "prompt": prompt,
@@ -965,7 +980,10 @@ def _call_flow_worker_for_scene(scene: dict, params) -> str:
 
     material_url = str(data.get("material_url") or "").strip()
     if material_url:
+        logger.info(f"PINGOO_FLOW_GENERATION_FINISHED scene={scene['scene_id']}")
         logger.info(f"PINGOO_FLOW_GENERATED scene={scene['scene_id']}")
+        logger.info(f"PINGOO_FLOW_DOWNLOADED_ON_WINDOWS scene={scene['scene_id']}")
+        logger.info(f"PINGOO_FLOW_UPLOADED_TO_VPS scene={scene['scene_id']}")
         logger.info(f"PINGOO_FLOW_UPLOADED scene={scene['scene_id']}")
     return material_url
 
@@ -1030,6 +1048,7 @@ def _route_scene_materials(
                     "material": "",
                     "query": query,
                     "status": status,
+                    "preferred_source": scene.get("preferred_source") or "",
                     **extra,
                 }
             )
@@ -1043,6 +1062,7 @@ def _route_scene_materials(
                     "query": query,
                     "status": "duplicate_guard",
                     "fallback_used": True,
+                    "preferred_source": scene.get("preferred_source") or "",
                     **extra,
                 }
             )
@@ -1061,6 +1081,7 @@ def _route_scene_materials(
                 "query": query,
                 "status": status,
                 "duration_target": scene.get("duration_target") or scene.get("duration_seconds") or 0.0,
+                "preferred_source": scene.get("preferred_source") or "",
                 **extra,
             }
         )
@@ -1132,6 +1153,7 @@ def _route_scene_materials(
                     "query": query,
                     "status": "missing_query",
                     "fallback_used": True,
+                    "preferred_source": scene.get("preferred_source") or "",
                 }
             )
             logger.warning(
@@ -1176,6 +1198,7 @@ def _route_scene_materials(
                 "query": query,
                 "status": "fallback",
                 "fallback_used": True,
+                "preferred_source": scene.get("preferred_source") or "",
             }
         )
         logger.warning(
@@ -1185,6 +1208,7 @@ def _route_scene_materials(
         )
 
     _persist_scene_material_assignments(task_id, assignments)
+    _patch_material_provenance(task_id, assignments)
     logger.info(
         "PINGOO_SCENE_ROUTER assignments: "
         f"{utils.to_json(assignments)}"
@@ -1387,6 +1411,90 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
 
 
 
+
+def _target_duration_seconds(params, audio_duration: float) -> float:
+    explicit = float(getattr(params, "target_duration_seconds", 0.0) or 0.0)
+    if explicit > 0:
+        return explicit
+    targets = _scene_duration_targets(params)
+    return float(sum(targets) if targets else (audio_duration or 0.0))
+
+
+def _load_script_data(task_id: str) -> dict:
+    try:
+        with open(path.join(utils.task_dir(task_id), "script.json"), "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_final_render_manifest(task_id: str, params, downloaded_videos: list[str], audio_duration: float) -> dict:
+    script_data = _load_script_data(task_id)
+    assignments = list(script_data.get("scene_material_assignments") or [])
+    scene_targets = _scene_duration_targets(params)
+    scenes = []
+    current = 0.0
+    for index, material_path in enumerate(downloaded_videos):
+        assignment = assignments[index] if index < len(assignments) else {}
+        duration = float(assignment.get("duration_target") or (scene_targets[index] if index < len(scene_targets) else 0.0) or getattr(params, "video_clip_duration", 4) or 4)
+        start = current
+        end = current + duration
+        current = end
+        scenes.append({"scene_id": assignment.get("scene_id", index + 1), "start": round(start, 3), "end": round(end, 3), "source": assignment.get("source", "unknown"), "material_path": material_path, "preferred_source": assignment.get("preferred_source") or "", "visual_query": assignment.get("query", "")})
+    manifest = {"target_duration": _target_duration_seconds(params, audio_duration), "actual_narration_duration": float(audio_duration or 0.0), "material_source_mode": _material_source_mode(params), "scenes": scenes}
+    with open(path.join(utils.task_dir(task_id), "final_render_manifest.json"), "w", encoding="utf-8") as fp:
+        json.dump(manifest, fp, ensure_ascii=False, indent=2); fp.write("\n")
+    task_artifacts.patch_script_data(task_id, final_render_manifest=manifest)
+    return manifest
+
+
+def _probe_video_duration(video_path: str) -> float:
+    clip = video._open_video_clip_quietly(video_path)
+    try:
+        return float(clip.duration or 0.0)
+    finally:
+        video.close_clip(clip)
+
+
+def _mark_rendered_provenance_used(task_id: str, manifest: dict) -> None:
+    script_data = _load_script_data(task_id)
+    provenance = list(script_data.get("material_provenance") or [])
+    used_paths = {str(scene.get("material_path") or "") for scene in manifest.get("scenes", [])}
+    for item in provenance:
+        item["used_in_final_render"] = str(item.get("local_path") or "") in used_paths
+    task_artifacts.patch_script_data(task_id, material_provenance=provenance)
+
+
+def _validate_final_artifact(task_id: str, params, final_video_path: str, manifest: dict) -> list[str]:
+    errors = []
+    target = float(manifest.get("target_duration") or 0.0)
+    scenes = list(manifest.get("scenes") or [])
+    source_mode = str(manifest.get("material_source_mode") or _material_source_mode(params))
+    if not path.isfile(final_video_path) or path.getsize(final_video_path) <= 0:
+        errors.append("FINAL_FILE_MISSING"); actual_duration = 0.0
+    else:
+        actual_duration = _probe_video_duration(final_video_path)
+    manifest["actual_final_duration"] = actual_duration
+    if target > 0 and not (target * 0.9 <= actual_duration <= target * 1.1): errors.append("TARGET_DURATION_OUT_OF_TOLERANCE")
+    expected_segments = 6 if target >= 54 else max(1, min(4, math.ceil(target / 10)))
+    if len(scenes) < expected_segments: errors.append("VISUAL_SEGMENT_COUNT_TOO_LOW")
+    material_paths = [str(scene.get("material_path") or "") for scene in scenes]
+    if len(material_paths) >= 4:
+        half = len(material_paths) // 2
+        if material_paths[:half] and material_paths[:half] == material_paths[half:half * 2]: errors.append("DUPLICATE_SEQUENCE_LOOP")
+    for material_path in material_paths:
+        if not material_path or not path.exists(material_path): errors.append("RENDERED_MATERIAL_MISSING"); break
+    flow_rendered = sum(1 for scene in scenes if scene.get("source") == "flow")
+    if source_mode == "flow_user_pexels" and flow_rendered < 2: errors.append("FLOW_SCENES_RENDERED_BELOW_REQUIRED")
+    if getattr(params, "subtitle_enabled", False) and not getattr(params, "font_name", ""): errors.append("SUBTITLE_CONFIGURATION_MISSING")
+    if not final_video_path: errors.append("TELEGRAM_DELIVERY_PATH_MISSING")
+    manifest["validation_errors"] = errors; manifest["flow_scenes_rendered"] = flow_rendered
+    with open(path.join(utils.task_dir(task_id), "final_render_manifest.json"), "w", encoding="utf-8") as fp:
+        json.dump(manifest, fp, ensure_ascii=False, indent=2); fp.write("\n")
+    task_artifacts.patch_script_data(task_id, final_render_manifest=manifest, artifact_validation_errors=errors)
+    return errors
+
 def _scene_duration_targets(params) -> list[float]:
     targets = []
     for scene in _scene_manifest_items(params):
@@ -1430,9 +1538,21 @@ def generate_final_videos(
             utils.task_dir(task_id), f"combined-{index}.mp4"
         )
         logger.info(f"\n\n## combining video: {index} => {combined_video_path}")
+        render_manifest = _build_final_render_manifest(
+            task_id,
+            params,
+            downloaded_videos,
+            audio_duration,
+        )
+        manifest_scenes = list(render_manifest.get("scenes") or [])
+        render_video_paths = [scene["material_path"] for scene in manifest_scenes]
+        manifest_duration_targets = [
+            max(0.5, float(scene["end"] - scene["start"]))
+            for scene in manifest_scenes
+        ]
         video.combine_videos(
             combined_video_path=combined_video_path,
-            video_paths=downloaded_videos,
+            video_paths=render_video_paths,
             audio_file=audio_file,
             video_aspect=params.video_aspect,
             video_concat_mode=video_concat_mode,
@@ -1440,7 +1560,7 @@ def generate_final_videos(
             max_clip_duration=params.video_clip_duration,
             threads=params.n_threads,
             clip_speed=params.video_clip_speed,
-            clip_duration_targets=clip_duration_targets or None,
+            clip_duration_targets=manifest_duration_targets or clip_duration_targets or None,
         )
 
         _progress += 50 / params.video_count / 2
@@ -1501,11 +1621,32 @@ def generate_final_videos(
                 }
             )
 
+        validation_errors = _validate_final_artifact(
+            task_id,
+            params,
+            final_video_path,
+            render_manifest,
+        )
+        _mark_rendered_provenance_used(task_id, render_manifest)
+        combined_video_paths.append(combined_video_path)
+        if validation_errors:
+            logger.error(
+                "PINGOO_ARTIFACT_ACCEPTANCE_GATE failed: "
+                f"task_id={task_id}, errors={validation_errors}"
+            )
+            warnings.append(
+                {
+                    "code": "artifact_acceptance_failed",
+                    "video_index": index,
+                    "errors": validation_errors,
+                }
+            )
+            return [], combined_video_paths, warnings
+
         _progress += 50 / params.video_count / 2
         sm.state.update_task(task_id, progress=_progress)
 
         final_video_paths.append(final_video_path)
-        combined_video_paths.append(combined_video_path)
 
     return final_video_paths, combined_video_paths, warnings
 

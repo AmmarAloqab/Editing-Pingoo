@@ -129,6 +129,8 @@ class TestTaskService(unittest.TestCase):
             patch.object(tm.video, "combine_videos") as combine_videos,
             patch.object(tm.video, "generate_video"),
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             tm.generate_final_videos(
                 task_id="scene-duration-task",
@@ -153,6 +155,8 @@ class TestTaskService(unittest.TestCase):
             patch.object(tm.video, "combine_videos") as combine_videos,
             patch.object(tm.video, "generate_video"),
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             tm.generate_final_videos(
                 task_id="clip-speed-task",
@@ -183,6 +187,8 @@ class TestTaskService(unittest.TestCase):
             ) as generate_bgm,
             patch.object(tm.video, "generate_video") as generate_video,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             _, _, warnings = tm.generate_final_videos(
                 task_id="sonilo-task",
@@ -220,6 +226,8 @@ class TestTaskService(unittest.TestCase):
             ) as generate_bgm,
             patch.object(tm.video, "generate_video") as generate_video,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             _, _, warnings = tm.generate_final_videos(
                 task_id="elevenlabs-task",
@@ -256,6 +264,8 @@ class TestTaskService(unittest.TestCase):
             ),
             patch.object(tm.video, "generate_video") as generate_video,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             final_paths, _, warnings = tm.generate_final_videos(
                 task_id="elevenlabs-fallback",
@@ -286,6 +296,8 @@ class TestTaskService(unittest.TestCase):
             ),
             patch.object(tm.video, "generate_video") as generate_video,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             final_paths, _, warnings = tm.generate_final_videos(
                 task_id="sonilo-fallback",
@@ -316,6 +328,8 @@ class TestTaskService(unittest.TestCase):
             patch.object(tm.sonilo, "generate_bgm") as generate_bgm,
             patch.object(tm.video, "generate_video", return_value=True) as generate,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             final_paths, _, warnings = tm.generate_final_videos(
                 task_id="sonilo-zero-volume",
@@ -344,6 +358,8 @@ class TestTaskService(unittest.TestCase):
             ),
             patch.object(tm.video, "generate_video", return_value=False) as generate,
             patch.object(tm.sm.state, "update_task"),
+            patch.object(tm, "_validate_final_artifact", return_value=[]),
+            patch.object(tm, "_mark_rendered_provenance_used"),
         ):
             final_paths, _, warnings = tm.generate_final_videos(
                 task_id="sonilo-mix-fallback",
@@ -1643,6 +1659,148 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(task["videos"], ["final.mp4"])
         self.assertEqual(task["cross_post_state"], tm.const.CROSS_POST_STATE_FAILED)
         self.assertIn("queue is full", task["cross_post_error"])
+
+
+    def _write_task_script(self, task_id, payload=None):
+        task_dir = utils.task_dir(task_id)
+        os.makedirs(task_dir, exist_ok=True)
+        tm.task_artifacts.write_script_data(task_id, payload or {})
+        return task_dir
+
+    def test_final_render_manifest_records_actual_sources(self):
+        task_id = f"manifest-{uuid4()}"
+        task_dir = self._write_task_script(
+            task_id,
+            {
+                "scene_material_assignments": [
+                    {
+                        "scene_id": 1,
+                        "source": "flow",
+                        "material": "/tmp/flow-scene.mp4",
+                        "query": "city losing gravity",
+                        "duration_target": 7.5,
+                        "preferred_source": "flow",
+                    },
+                    {
+                        "scene_id": 2,
+                        "source": "pexels",
+                        "material": "/tmp/pexels-scene.mp4",
+                        "query": "ocean rising",
+                        "duration_target": 7.5,
+                        "preferred_source": "pexels",
+                    },
+                ]
+            },
+        )
+        try:
+            params = VideoParams(
+                video_subject="gravity",
+                material_source_mode="flow_user_pexels",
+                target_duration_seconds=60,
+            )
+
+            manifest = tm._build_final_render_manifest(
+                task_id,
+                params,
+                ["/tmp/flow-scene.mp4", "/tmp/pexels-scene.mp4"],
+                58,
+            )
+
+            self.assertEqual(manifest["target_duration"], 60)
+            self.assertEqual(manifest["scenes"][0]["source"], "flow")
+            self.assertEqual(manifest["scenes"][1]["source"], "pexels")
+            self.assertTrue(os.path.isfile(os.path.join(task_dir, "final_render_manifest.json")))
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_artifact_gate_rejects_short_duration_for_target_60(self):
+        task_id = f"gate-short-{uuid4()}"
+        task_dir = self._write_task_script(task_id, {})
+        try:
+            final_path = os.path.join(task_dir, "final-1.mp4")
+            Path(final_path).write_bytes(b"video")
+            material_paths = []
+            for index in range(6):
+                material_path = os.path.join(task_dir, f"scene-{index}.mp4")
+                Path(material_path).write_bytes(b"scene")
+                material_paths.append(material_path)
+            manifest = {
+                "target_duration": 60,
+                "material_source_mode": "pexels_only",
+                "scenes": [
+                    {"source": "pexels", "material_path": p}
+                    for p in material_paths
+                ],
+            }
+            params = VideoParams(video_subject="gravity", target_duration_seconds=60)
+
+            with patch.object(tm, "_probe_video_duration", return_value=39.1):
+                errors = tm._validate_final_artifact(task_id, params, final_path, manifest)
+
+            self.assertIn("TARGET_DURATION_OUT_OF_TOLERANCE", errors)
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_artifact_gate_rejects_three_segments_for_target_60(self):
+        task_id = f"gate-segments-{uuid4()}"
+        task_dir = self._write_task_script(task_id, {})
+        try:
+            final_path = os.path.join(task_dir, "final-1.mp4")
+            Path(final_path).write_bytes(b"video")
+            material_paths = []
+            for index in range(3):
+                material_path = os.path.join(task_dir, f"scene-{index}.mp4")
+                Path(material_path).write_bytes(b"scene")
+                material_paths.append(material_path)
+            manifest = {
+                "target_duration": 60,
+                "material_source_mode": "pexels_only",
+                "scenes": [
+                    {"source": "pexels", "material_path": p}
+                    for p in material_paths
+                ],
+            }
+            params = VideoParams(video_subject="gravity", target_duration_seconds=60)
+
+            with patch.object(tm, "_probe_video_duration", return_value=60.0):
+                errors = tm._validate_final_artifact(task_id, params, final_path, manifest)
+
+            self.assertIn("VISUAL_SEGMENT_COUNT_TOO_LOW", errors)
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_generate_final_videos_blocks_completion_when_gate_fails(self):
+        params = VideoParams(
+            video_subject="gravity",
+            video_count=1,
+            target_duration_seconds=60,
+            material_source_mode="flow_user_pexels",
+        )
+
+        with (
+            patch.object(tm.video, "combine_videos"),
+            patch.object(tm.video, "generate_video", return_value=True),
+            patch.object(tm.sm.state, "update_task") as update_task,
+            patch.object(
+                tm,
+                "_validate_final_artifact",
+                return_value=["TARGET_DURATION_OUT_OF_TOLERANCE"],
+            ),
+            patch.object(tm, "_mark_rendered_provenance_used"),
+        ):
+            final_paths, combined_paths, warnings = tm.generate_final_videos(
+                task_id=f"gate-block-{uuid4()}",
+                params=params,
+                downloaded_videos=["flow-1.mp4", "flow-2.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="subtitle.srt",
+                audio_duration=60,
+            )
+
+        self.assertEqual(final_paths, [])
+        self.assertEqual(len(combined_paths), 1)
+        self.assertEqual(warnings[-1]["code"], "artifact_acceptance_failed")
+        self.assertLess(update_task.call_count, 2)
 
     @unittest.skipUnless(
         RUN_INTEGRATION_TESTS,
