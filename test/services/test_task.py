@@ -87,6 +87,60 @@ class TestTaskService(unittest.TestCase):
             custom_system_prompt="Only write short narration.",
         )
 
+
+    def test_arabic_tts_script_contains_diacritics_and_preserves_duration(self):
+        params = VideoParams(
+            video_subject="كيف يعمل البيتكوين",
+            video_script="كيف يعمل البيتكوين وما دور المعدنين",
+            video_language="ar-SA",
+            voice_name="ar-SA-HamedNeural",
+        )
+        sub_maker = object()
+
+        with (
+            patch.object(tm.voice, "tts", return_value=sub_maker) as tts,
+            patch.object(tm.voice, "get_audio_duration", return_value=62.37),
+        ):
+            _audio_file, audio_duration, _sub_maker = tm.generate_audio(
+                "arabic-tts-task",
+                params,
+                params.video_script,
+            )
+
+        self.assertEqual(audio_duration, 63)
+        self.assertTrue(tm._contains_arabic_diacritics(params.tts_script_ar))
+        self.assertIn("كَيْفَ", params.tts_script_ar)
+        self.assertEqual(params.subtitle_text_ar, params.video_script)
+        tts.assert_called_once()
+        self.assertEqual(tts.call_args.kwargs["text"], params.tts_script_ar)
+        self.assertNotEqual(tts.call_args.kwargs["text"], params.video_script)
+
+    def test_generate_final_videos_forwards_scene_duration_targets(self):
+        params = VideoParams(
+            video_subject="test",
+            video_count=1,
+            scene_manifest=[
+                {"scene_id": 1, "narration": "a", "visual_query": "a", "duration_target": 7.5},
+                {"scene_id": 2, "narration": "b", "visual_query": "b", "duration_seconds": 5.0},
+            ],
+        )
+
+        with (
+            patch.object(tm.video, "combine_videos") as combine_videos,
+            patch.object(tm.video, "generate_video"),
+            patch.object(tm.sm.state, "update_task"),
+        ):
+            tm.generate_final_videos(
+                task_id="scene-duration-task",
+                params=params,
+                downloaded_videos=["scene-1.mp4", "scene-2.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=12,
+            )
+
+        self.assertEqual(combine_videos.call_args.kwargs["clip_duration_targets"], [7.5, 5.0])
+
     def test_generate_final_videos_forwards_clip_speed(self):
         """任务编排层必须把用户选择的画面速度传给视频合成服务。"""
         params = VideoParams(

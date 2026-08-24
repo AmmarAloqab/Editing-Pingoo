@@ -312,6 +312,27 @@ class TestVideoService(unittest.TestCase):
                 else:
                     audio_loop.assert_not_called()
 
+
+    def test_final_scene_extension_does_not_loop_entire_sequence(self):
+        first = vd.SubClippedVideoClip("scene-1.mp4", duration=4, source_file_path="scene-1.mp4")
+        second = vd.SubClippedVideoClip("scene-2.mp4", duration=4, source_file_path="scene-2.mp4")
+
+        clips, duration, extensions = vd._extend_final_scene_without_sequence_loop(
+            [first, second],
+            video_duration=8,
+            required_video_duration=14,
+        )
+
+        self.assertEqual(duration, 16)
+        self.assertEqual(extensions, 2)
+        self.assertEqual([clip.file_path for clip in clips], ["scene-1.mp4", "scene-2.mp4", "scene-2.mp4", "scene-2.mp4"])
+        self.assertNotEqual([clip.file_path for clip in clips], ["scene-1.mp4", "scene-2.mp4", "scene-1.mp4", "scene-2.mp4"])
+
+    def test_clip_duration_target_prefers_scene_duration(self):
+        self.assertEqual(vd._clip_duration_target_for_index([7.5], 0, 4), 7.5)
+        self.assertEqual(vd._clip_duration_target_for_index([0], 0, 4), 4)
+        self.assertEqual(vd._clip_duration_target_for_index([7.5], 1, 4), 4)
+
     def test_preprocess_video(self):
         if not os.path.exists(self.test_img_path):
             self.fail(f"test image not found: {self.test_img_path}")
@@ -562,9 +583,14 @@ class TestVideoService(unittest.TestCase):
                         output_dir=temp_dir,
                     )
 
-        used_codecs = [
-            call.args[0][call.args[0].index("-c:v") + 1]
+        encoded_commands = [
+            call.args[0]
             for call in run.call_args_list
+            if "-c:v" in call.args[0]
+        ]
+        used_codecs = [
+            command[command.index("-c:v") + 1]
+            for command in encoded_commands
         ]
         self.assertEqual(used_codecs, ["h264_nvenc", "libx264"])
         self.assertIn("h264_nvenc", vd._runtime_disabled_video_codecs)
@@ -884,7 +910,11 @@ class TestVideoService(unittest.TestCase):
                     max_duration=10.0,
                 )
 
-        command = run.call_args.args[0]
+        command = next(
+            call.args[0]
+            for call in run.call_args_list
+            if "-t" in call.args[0]
+        )
         self.assertEqual(command[command.index("-t") + 1], "10.000")
         self.assertLess(command.index("-t"), command.index(output_file))
 

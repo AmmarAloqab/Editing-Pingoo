@@ -69,6 +69,7 @@ class SceneManifestItem(BaseModel):
     visual_prompt: str = ""
     visual_query: str = ""
     duration_seconds: float = 0.0
+    duration_target: float = 0.0
     preferred_source: str = "auto"
     material_status: str = "pending"
 
@@ -90,6 +91,8 @@ class VideoParams(BaseModel):
 
     video_subject: str
     video_script: str = ""  # Script used to generate the video
+    tts_script_ar: str = ""  # Vocalized Arabic script used only for TTS pronunciation
+    subtitle_text_ar: str = ""  # Display-friendly Arabic subtitle text
     video_terms: Optional[str | list] = None  # Keywords used to generate the video
     video_aspect: Optional[VideoAspect] = VideoAspect.portrait.value
     video_concat_mode: Optional[VideoConcatMode] = VideoConcatMode.random.value

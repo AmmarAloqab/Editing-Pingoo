@@ -347,6 +347,8 @@ def generate_terms(task_id, params, video_script):
 def save_script_data(task_id, video_script, video_terms, params):
     script_data = {
         "script": video_script,
+        "tts_script_ar": getattr(params, "tts_script_ar", "") or "",
+        "subtitle_text_ar": getattr(params, "subtitle_text_ar", "") or "",
         "search_terms": video_terms,
         "params": params,
     }
@@ -387,6 +389,102 @@ def _apply_arabic_subtitle_defaults(params) -> None:
     params.subtitle_position = "custom"
     params.custom_position = 78.0
 
+
+
+_ARABIC_DIACRITIC_RE = re.compile(r"[\u064b-\u065f\u0670]")
+_ARABIC_LETTER_RE = re.compile(r"[\u0600-\u06ff]")
+
+_TECH_TERM_TTS_REPLACEMENTS = (
+    (re.compile(r"\bbitcoin\b|البيتكوين|بيتكوين", re.IGNORECASE), "Bitcoin"),
+    (re.compile(r"\bblockchain\b|البلوكشين|بلوكشين", re.IGNORECASE), "Blockchain"),
+)
+
+_ARABIC_TTS_WORDS = {
+    "كيف": "كَيْفَ",
+    "يعمل": "يَعْمَلُ",
+    "وما": "وَمَا",
+    "ما": "مَا",
+    "دور": "دَوْرُ",
+    "المعدنين": "المُعَدِّنِينَ",
+    "المعدنون": "المُعَدِّنُونَ",
+    "التعدين": "التَّعْدِينِ",
+    "المحافظ": "المَحَافِظِ",
+    "الرقمية": "الرَّقْمِيَّةِ",
+    "الرقمي": "الرَّقْمِيِّ",
+    "عملة": "عُمْلَةٌ",
+    "تخيل": "تَخَيَّلْ",
+    "شبكة": "شَبَكَةٌ",
+    "عالمية": "عَالَمِيَّةٌ",
+    "تسجل": "تُسَجِّلُ",
+    "التحويلات": "التَّحْوِيلَاتِ",
+    "المستخدمين": "المُسْتَخْدِمِينَ",
+    "مباشرة": "مُبَاشَرَةً",
+    "كتلة": "كُتْلَةٌ",
+    "سلسلة": "سِلْسِلَةٌ",
+    "السجل": "السِّجِلِّ",
+    "تغيير": "تَغْيِيرُ",
+    "تزوير": "تَزْوِيرُ",
+    "الرصيد": "الرَّصِيدِ",
+    "يتحققون": "يَتَحَقَّقُونَ",
+    "المعاملات": "المُعَامَلَاتِ",
+    "يتنافسون": "يَتَنَافَسُونَ",
+    "حسابية": "حِسَابِيَّةٍ",
+    "توثق": "تُوَثِّقُ",
+    "موثقة": "مُوَثَّقَةً",
+    "الثقة": "الثِّقَةُ",
+    "قواعد": "قَوَاعِدَ",
+    "مفتوحة": "مَفْتُوحَةٍ",
+    "الخلاصة": "الخُلَاصَةُ",
+    "نظام": "نِظَامٌ",
+    "نقدي": "نَقْدِيٌّ",
+    "يعتمد": "يَعْتَمِدُ",
+    "التشفير": "التَّشْفِيرِ",
+    "الندرة": "النُّدْرَةِ",
+    "الإجماع": "الإِجْمَاعِ",
+    "الوسيط": "الوَسِيطِ",
+    "المركزي": "المَرْكَزِيِّ",
+}
+
+
+def _contains_arabic_diacritics(text: str) -> bool:
+    return bool(_ARABIC_DIACRITIC_RE.search(str(text or "")))
+
+
+def _is_arabic_text(text: str) -> bool:
+    return bool(_ARABIC_LETTER_RE.search(str(text or "")))
+
+
+def _vocalize_arabic_for_tts(text: str) -> str:
+    """Add conservative Arabic diacritics for TTS without changing meaning."""
+    if not text or not _is_arabic_text(text):
+        return text
+    if _contains_arabic_diacritics(text):
+        return text
+
+    vocalized = str(text)
+    for pattern, replacement in _TECH_TERM_TTS_REPLACEMENTS:
+        vocalized = pattern.sub(replacement, vocalized)
+
+    def replace_word(match: re.Match) -> str:
+        word = match.group(0)
+        return _ARABIC_TTS_WORDS.get(word, word)
+
+    vocalized = re.sub(r"[\u0621-\u064a]+", replace_word, vocalized)
+    return vocalized
+
+
+def _prepare_arabic_narration_fields(params, video_script: str) -> tuple[str, str]:
+    subtitle_text = str(video_script or "").strip()
+    tts_script = subtitle_text
+    if _is_arabic_params(params) or _is_arabic_text(subtitle_text):
+        tts_script = _vocalize_arabic_for_tts(subtitle_text)
+        params.tts_script_ar = tts_script
+        params.subtitle_text_ar = subtitle_text
+        logger.info(
+            "PINGOO_ARABIC_TTS_DIACRITIZATION enabled: "
+            f"diacritics={_contains_arabic_diacritics(tts_script)}"
+        )
+    return tts_script, subtitle_text
 
 def resolve_custom_audio_file(task_id: str, custom_audio_file: str | None) -> str:
     requested_file = (custom_audio_file or "").strip()
@@ -514,11 +612,13 @@ def generate_audio(task_id, params, video_script, voice_preview=None):
         )
         return None, None, None
 
+    tts_script, _subtitle_text = _prepare_arabic_narration_fields(params, video_script)
+
     if not custom_audio_file:
         reusable_preview = _resolve_reusable_voice_preview(
             task_id,
             params,
-            video_script,
+            tts_script,
             voice_preview,
         )
         if reusable_preview:
@@ -527,7 +627,7 @@ def generate_audio(task_id, params, video_script, voice_preview=None):
         logger.info("no custom audio file provided, using TTS to generate audio.")
         audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
         sub_maker = voice.tts(
-            text=video_script,
+            text=tts_script,
             voice_name=voice.parse_voice_name(params.voice_name),
             voice_rate=params.voice_rate,
             voice_file=audio_file,
@@ -586,9 +686,11 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         )
         return ""
 
+    subtitle_text = getattr(params, "subtitle_text_ar", "") or video_script
+
     if subtitle_provider == "edge":
         voice.create_subtitle(
-            text=video_script, sub_maker=sub_maker, subtitle_file=subtitle_path
+            text=subtitle_text, sub_maker=sub_maker, subtitle_file=subtitle_path
         )
         if not os.path.exists(subtitle_path):
             # Edge 字幕偶尔会因为时间轴与文案无法匹配而没有产出文件。这里不能
@@ -604,7 +706,7 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     if subtitle_provider == "whisper":
         subtitle.create(audio_file=audio_file, subtitle_file=subtitle_path)
         logger.info("\n\n## correcting subtitle")
-        subtitle.correct(subtitle_file=subtitle_path, video_script=video_script)
+        subtitle.correct(subtitle_file=subtitle_path, video_script=subtitle_text)
 
     subtitle_lines = subtitle.file_to_subtitles(subtitle_path)
     if not subtitle_lines:
@@ -627,14 +729,14 @@ def _scene_manifest_items(params) -> list[dict]:
             narration = scene.get("narration", "")
             visual_prompt = scene.get("visual_prompt", "")
             preferred_source = scene.get("preferred_source", "auto")
-            duration_seconds = scene.get("duration_seconds", 0.0)
+            duration_seconds = scene.get("duration_target", scene.get("duration_seconds", 0.0))
         else:
             raw_scene_id = getattr(scene, "scene_id", index)
             visual_query = getattr(scene, "visual_query", "")
             narration = getattr(scene, "narration", "")
             visual_prompt = getattr(scene, "visual_prompt", "")
             preferred_source = getattr(scene, "preferred_source", "auto")
-            duration_seconds = getattr(scene, "duration_seconds", 0.0)
+            duration_seconds = getattr(scene, "duration_target", 0.0) or getattr(scene, "duration_seconds", 0.0)
 
         try:
             scene_id = int(raw_scene_id)
@@ -649,6 +751,7 @@ def _scene_manifest_items(params) -> list[dict]:
                 "visual_prompt": str(visual_prompt or "").strip(),
                 "preferred_source": str(preferred_source or "auto").strip().lower(),
                 "duration_seconds": float(duration_seconds or 0.0),
+                "duration_target": float(duration_seconds or 0.0),
             }
         )
 
@@ -751,21 +854,92 @@ def _max_auto_flow_scenes() -> int:
     )
 
 
+
+def _safe_flow_failure_code(exc: Exception | None = None, code: str = "FLOW_EMPTY_RESULT") -> str:
+    if exc is None:
+        return code
+    if isinstance(exc, TimeoutError):
+        return "FLOW_TIMEOUT"
+    if isinstance(exc, urlerror.URLError):
+        return "FLOW_NETWORK_ERROR"
+    if isinstance(exc, OSError):
+        return "FLOW_OS_ERROR"
+    if isinstance(exc, ValueError):
+        return "FLOW_RESPONSE_ERROR"
+    return type(exc).__name__
+
+
+def _build_flow_visual_prompt(scene: dict, params) -> str:
+    raw_prompt = str(
+        scene.get("visual_prompt")
+        or scene.get("visual_query")
+        or scene.get("narration")
+        or ""
+    ).strip()
+    narration = str(scene.get("narration") or "").strip()
+    subject = str(getattr(params, "video_subject", "") or "").strip()
+    base = raw_prompt or narration or subject
+
+    prompt_lower = base.lower()
+    has_visual_detail = all(
+        token in prompt_lower
+        for token in ("lighting", "vertical", "no text")
+    ) and any(
+        token in prompt_lower
+        for token in ("cinematic", "camera", "macro", "wide shot", "motion")
+    )
+    if has_visual_detail:
+        return base
+
+    english_subject = base
+    replacements = {
+        "البيتكوين": "Bitcoin",
+        "بيتكوين": "Bitcoin",
+        "البلوكشين": "Blockchain",
+        "بلوكشين": "Blockchain",
+        "التعدين": "Bitcoin mining",
+        "المحافظ الرقمية": "digital crypto wallets",
+    }
+    for source, target in replacements.items():
+        english_subject = english_subject.replace(source, target)
+
+    return (
+        f"Cinematic vertical 9:16 video shot about {english_subject}. "
+        "Show a specific, high-end visual scene with clear subject, realistic environment, "
+        "smooth camera motion, rich depth, volumetric lighting, detailed textures, "
+        "professional color grading, no text, no captions, no logos."
+    )
+
+
+def _asset_key(material_path: str) -> str:
+    normalized = path.realpath(str(material_path or "")) if material_path else ""
+    return normalized.lower()
+
+
+def _is_duplicate_asset(material_path: str, used_asset_keys: set[str]) -> bool:
+    key = _asset_key(material_path)
+    return bool(key and key in used_asset_keys)
+
+
+def _remember_asset(material_path: str, used_asset_keys: set[str]) -> None:
+    key = _asset_key(material_path)
+    if key:
+        used_asset_keys.add(key)
+
 def _call_flow_worker_for_scene(scene: dict, params) -> str:
     worker_url = _flow_worker_url()
     if not worker_url:
         return ""
 
-    prompt = (
-        scene.get("visual_prompt")
-        or scene.get("visual_query")
-        or scene.get("narration")
-        or ""
-    )
-    prompt = str(prompt).strip()
+    prompt = _build_flow_visual_prompt(scene, params)
     if not prompt:
+        logger.warning(
+            "PINGOO_FLOW_FAILED "
+            f"scene={scene['scene_id']} reason=FLOW_EMPTY_PROMPT"
+        )
         return ""
 
+    logger.info(f"PINGOO_FLOW_REQUEST scene={scene['scene_id']}")
     payload = {
         "scene_id": scene["scene_id"],
         "prompt": prompt,
@@ -784,12 +958,16 @@ def _call_flow_worker_for_scene(scene: dict, params) -> str:
     data = json.loads(body)
     if not data.get("ok"):
         logger.warning(
-            "PINGOO_FLOW_WORKER: generation failed, "
-            f"scene={scene['scene_id']}, error={data.get('error')}"
+            "PINGOO_FLOW_FAILED "
+            f"scene={scene['scene_id']} reason=FLOW_WORKER_REJECTED"
         )
         return ""
 
-    return str(data.get("material_url") or "").strip()
+    material_url = str(data.get("material_url") or "").strip()
+    if material_url:
+        logger.info(f"PINGOO_FLOW_GENERATED scene={scene['scene_id']}")
+        logger.info(f"PINGOO_FLOW_UPLOADED scene={scene['scene_id']}")
+    return material_url
 
 
 def _route_scene_materials(
@@ -800,8 +978,6 @@ def _route_scene_materials(
     flow_paths_by_scene: dict[int, str] | None = None,
 ) -> list[str]:
     # PINGOO_SCENE_MATERIAL_ROUTER_V1
-    # V1 keeps user materials in upload order, then downloads one provider
-    # material per remaining scene using that scene's visual_query.
     material_source_mode = _material_source_mode(params)
     use_flow = material_source_mode in {"auto", "flow_user_pexels"}
     use_user = material_source_mode in {
@@ -822,12 +998,14 @@ def _route_scene_materials(
         f"flow_materials={len(flow_paths_by_scene)}"
     )
 
-    material_paths = []
-    assignments = []
+    material_paths: list[str] = []
+    assignments: list[dict] = []
+    used_asset_keys: set[str] = set()
     used_user_materials = 0
     generated_flow_scenes = 0
     max_flow_scenes = _max_auto_flow_scenes()
     scene_ids = {scene["scene_id"] for scene in scene_manifest}
+
     for scene_id in sorted(flow_paths_by_scene):
         if scene_id not in scene_ids:
             logger.warning(
@@ -835,28 +1013,70 @@ def _route_scene_materials(
                 f"scene_id={scene_id} is not in scene_manifest"
             )
 
-    for index, scene in enumerate(scene_manifest):
+    def assign_scene_material(
+        scene: dict,
+        source: str,
+        material_path: str,
+        query: str,
+        status: str = "assigned",
+        **extra,
+    ) -> bool:
+        scene_id = scene["scene_id"]
+        if not material_path:
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": source,
+                    "material": "",
+                    "query": query,
+                    "status": status,
+                    **extra,
+                }
+            )
+            return False
+        if _is_duplicate_asset(material_path, used_asset_keys):
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": source,
+                    "material": "",
+                    "query": query,
+                    "status": "duplicate_guard",
+                    "fallback_used": True,
+                    **extra,
+                }
+            )
+            logger.warning(
+                "PINGOO_DUPLICATE_ASSET_GUARD: skip duplicate asset, "
+                f"scene={scene_id}, source={source}"
+            )
+            return False
+        _remember_asset(material_path, used_asset_keys)
+        material_paths.append(material_path)
+        assignments.append(
+            {
+                "scene_id": scene_id,
+                "source": source,
+                "material": material_path,
+                "query": query,
+                "status": status,
+                "duration_target": scene.get("duration_target") or scene.get("duration_seconds") or 0.0,
+                **extra,
+            }
+        )
+        return True
+
+    for scene in scene_manifest:
         scene_id = scene["scene_id"]
         query = scene["visual_query"]
         preferred_source = str(scene.get("preferred_source", "auto") or "auto").lower()
 
         if scene_id in flow_paths_by_scene:
             material_path = flow_paths_by_scene[scene_id]
-            material_paths.append(material_path)
-            assignments.append(
-                {
-                    "scene_id": scene_id,
-                    "source": "flow",
-                    "material": material_path,
-                    "query": query,
-                    "status": "assigned",
-                }
-            )
-            logger.info(
-                "PINGOO_SCENE_ROUTER: "
-                f"scene={scene_id} source=flow"
-            )
-            continue
+            if assign_scene_material(scene, "flow", material_path, query):
+                logger.info(f"PINGOO_FLOW_ASSIGNED scene={scene_id}")
+                logger.info("PINGOO_SCENE_ROUTER: " f"scene={scene_id} source=flow")
+                continue
 
         if (
             material_source_mode == "flow_user_pexels"
@@ -867,54 +1087,47 @@ def _route_scene_materials(
                 material_path = _call_flow_worker_for_scene(scene, params)
             except (OSError, urlerror.URLError, TimeoutError, ValueError) as exc:
                 logger.warning(
-                    "PINGOO_FLOW_WORKER: request failed, "
-                    f"scene={scene_id}, error={type(exc).__name__}"
+                    "PINGOO_FLOW_FAILED "
+                    f"scene={scene_id} reason={_safe_flow_failure_code(exc)}"
                 )
                 material_path = ""
 
-            if material_path:
+            if material_path and assign_scene_material(
+                scene,
+                "flow",
+                material_path,
+                query,
+                generated=True,
+            ):
                 generated_flow_scenes += 1
-                material_paths.append(material_path)
-                assignments.append(
-                    {
-                        "scene_id": scene_id,
-                        "source": "flow",
-                        "material": material_path,
-                        "query": query,
-                        "status": "assigned",
-                        "generated": True,
-                    }
-                )
+                logger.info(f"PINGOO_FLOW_ASSIGNED scene={scene_id}")
                 logger.info(
                     "PINGOO_SCENE_ROUTER: "
                     f"scene={scene_id} source=flow generated=true"
                 )
                 continue
+            if not material_path:
+                logger.warning(
+                    "PINGOO_FLOW_FAILED "
+                    f"scene={scene_id} reason={_safe_flow_failure_code(code='FLOW_EMPTY_RESULT')}"
+                )
 
-        if used_user_materials < len(supplemental_paths):
+        user_assigned = False
+        while used_user_materials < len(supplemental_paths):
             material_path = supplemental_paths[used_user_materials]
             used_user_materials += 1
-            material_paths.append(material_path)
-            assignments.append(
-                {
-                    "scene_id": scene_id,
-                    "source": "user",
-                    "material": material_path,
-                    "query": query,
-                    "status": "assigned",
-                }
-            )
-            logger.info(
-                "PINGOO_SCENE_ROUTER: "
-                f"scene={scene_id} source=user"
-            )
+            if assign_scene_material(scene, "user", material_path, query):
+                logger.info("PINGOO_SCENE_ROUTER: " f"scene={scene_id} source=user")
+                user_assigned = True
+                break
+        if user_assigned:
             continue
 
         if not query:
             assignments.append(
                 {
                     "scene_id": scene_id,
-                    "source": "pexels",
+                    "source": params.video_source,
                     "material": "",
                     "query": query,
                     "status": "missing_query",
@@ -923,14 +1136,15 @@ def _route_scene_materials(
             )
             logger.warning(
                 "PINGOO_SCENE_ROUTER: "
-                f"scene={scene_id} source=pexels query=\"\" fallback_used=true"
+                f"scene={scene_id} source={params.video_source} query=\"\" fallback_used=true"
             )
             continue
 
         logger.info(
             "PINGOO_SCENE_ROUTER: "
-            f"scene={scene_id} source=pexels query={query!r}"
+            f"scene={scene_id} source={params.video_source} query={query!r}"
         )
+        scene_duration = float(scene.get("duration_target") or scene.get("duration_seconds") or 0.0)
         scene_paths = material.download_videos(
             task_id=task_id,
             search_terms=[query],
@@ -938,26 +1152,20 @@ def _route_scene_materials(
             video_aspect=params.video_aspect,
             video_concat_mode=VideoConcatMode.sequential,
             audio_duration=0.0,
-            max_clip_duration=params.video_clip_duration,
+            max_clip_duration=max(params.video_clip_duration, math.ceil(scene_duration or 0.0)),
             match_script_order=True,
         )
 
-        if scene_paths:
-            material_path = scene_paths[0]
-            material_paths.append(material_path)
-            assignments.append(
-                {
-                    "scene_id": scene_id,
-                    "source": params.video_source,
-                    "material": material_path,
-                    "query": query,
-                    "status": "assigned",
-                }
-            )
-            logger.info(
-                "PINGOO_SCENE_ROUTER: "
-                f"scene={scene_id} source={params.video_source} assigned=true"
-            )
+        provider_assigned = False
+        for candidate in scene_paths or []:
+            if assign_scene_material(scene, params.video_source, candidate, query):
+                logger.info(
+                    "PINGOO_SCENE_ROUTER: "
+                    f"scene={scene_id} source={params.video_source} assigned=true"
+                )
+                provider_assigned = True
+                break
+        if provider_assigned:
             continue
 
         assignments.append(
@@ -982,7 +1190,6 @@ def _route_scene_materials(
         f"{utils.to_json(assignments)}"
     )
     return material_paths
-
 
 def get_video_materials(task_id, params, video_terms, audio_duration):
     # PINGOO_SUPPLEMENTAL_MATERIALS_V1
@@ -1179,6 +1386,16 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
         return downloaded_videos
 
 
+
+def _scene_duration_targets(params) -> list[float]:
+    targets = []
+    for scene in _scene_manifest_items(params):
+        duration = float(scene.get("duration_target") or scene.get("duration_seconds") or 0.0)
+        if duration > 0:
+            targets.append(duration)
+    return targets
+
+
 def generate_final_videos(
     task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration
 ):
@@ -1199,6 +1416,12 @@ def generate_final_videos(
     else:
         video_concat_mode = VideoConcatMode.random
     video_transition_mode = params.video_transition_mode
+    clip_duration_targets = _scene_duration_targets(params)
+    if clip_duration_targets:
+        logger.info(
+            "PINGOO_SCENE_DURATION_MATCHING enabled: "
+            f"targets={clip_duration_targets}"
+        )
 
     _progress = 50
     for i in range(params.video_count):
@@ -1217,6 +1440,7 @@ def generate_final_videos(
             max_clip_duration=params.video_clip_duration,
             threads=params.n_threads,
             clip_speed=params.video_clip_speed,
+            clip_duration_targets=clip_duration_targets or None,
         )
 
         _progress += 50 / params.video_count / 2
@@ -1673,6 +1897,7 @@ def _run_pipeline(
         return _mark_task_failed(task_id, "script", error)
     params.video_script = video_script
     _apply_arabic_subtitle_defaults(params)
+    _prepare_arabic_narration_fields(params, video_script)
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=10)
 

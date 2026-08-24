@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.models.schema import MaterialInfo, VideoParams
 from app.services import task
@@ -387,6 +387,108 @@ class SceneMaterialRouterTest(unittest.TestCase):
             [item["source"] for item in assignments["scene_material_assignments"]],
             ["user", "flow"],
         )
+
+
+    def test_duplicate_asset_guard_skips_reused_provider_asset(self):
+        assignments = {}
+
+        def fake_download_videos(**kwargs):
+            return ["/tmp/same-provider.mp4"]
+
+        params = VideoParams(
+            video_subject="bitcoin",
+            video_terms=[],
+            video_source="pexels",
+            material_source_mode="pexels_only",
+            scene_manifest=[
+                _scene(1, "scene one"),
+                _scene(2, "scene two"),
+            ],
+        )
+
+        with (
+            patch.object(task.material, "download_videos", fake_download_videos),
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **updates: assignments.update(updates) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "duplicate-provider-test",
+                params,
+                params.video_terms,
+                10,
+            )
+
+        self.assertEqual(result, ["/tmp/same-provider.mp4"])
+        self.assertEqual(
+            [item["status"] for item in assignments["scene_material_assignments"]],
+            ["assigned", "duplicate_guard", "fallback"],
+        )
+
+    def test_flow_prompt_is_detailed_visual_prompt_not_raw_arabic(self):
+        params = VideoParams(video_subject="كيف يعمل البيتكوين", video_aspect="9:16")
+        prompt = task._build_flow_visual_prompt(
+            {
+                "scene_id": 1,
+                "narration": "كيف يعمل البيتكوين",
+                "visual_query": "كيف يعمل البيتكوين",
+                "visual_prompt": "كيف يعمل البيتكوين",
+            },
+            params,
+        )
+
+        self.assertIn("Cinematic", prompt)
+        self.assertIn("vertical 9:16", prompt)
+        self.assertIn("volumetric lighting", prompt)
+        self.assertIn("no text", prompt)
+        self.assertIn("Bitcoin", prompt)
+        self.assertNotEqual(prompt, "كيف يعمل البيتكوين")
+
+    def test_successful_flow_result_stays_assigned_and_records_duration(self):
+        assignments = {}
+
+        def fake_flow(scene, params):
+            return f"flow-generated-{scene['scene_id']}.mp4"
+
+        params = VideoParams(
+            video_subject="bitcoin",
+            video_terms=[],
+            video_source="pexels",
+            material_source_mode="flow_user_pexels",
+            scene_manifest=[
+                {
+                    **_flow_scene(1, "Bitcoin intro"),
+                    "duration_target": 7.5,
+                },
+            ],
+        )
+
+        flow_mock = MagicMock(side_effect=fake_flow)
+
+        with (
+            patch.object(task, "_call_flow_worker_for_scene", flow_mock),
+            patch.object(task, "_max_auto_flow_scenes", lambda: 2),
+            patch.object(task.material, "download_videos") as download_videos,
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **updates: assignments.update(updates) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "flow-priority-test",
+                params,
+                params.video_terms,
+                10,
+            )
+
+        self.assertEqual(result, ["flow-generated-1.mp4"])
+        flow_mock.assert_called_once()
+        download_videos.assert_not_called()
+        self.assertEqual(assignments["scene_material_assignments"][0]["source"], "flow")
+        self.assertEqual(assignments["scene_material_assignments"][0]["duration_target"], 7.5)
 
     def test_flow_user_pexels_calls_worker_before_pexels(self):
         calls = []

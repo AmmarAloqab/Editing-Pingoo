@@ -387,8 +387,10 @@ def concat_video_clips_with_ffmpeg(
             "copy",
             "-movflags",
             "+faststart",
-            output_file,
         ]
+        if max_duration is not None and max_duration > 0:
+            command.extend(["-t", f"{max_duration:.3f}"])
+        command.append(output_file)
 
         result = subprocess.run(
             command,
@@ -600,6 +602,41 @@ def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
     return ""
 
 
+
+
+def _extend_final_scene_without_sequence_loop(
+    processed_clips: List[SubClippedVideoClip],
+    video_duration: float,
+    required_video_duration: float,
+) -> tuple[List[SubClippedVideoClip], float, int]:
+    if video_duration >= required_video_duration or not processed_clips:
+        return processed_clips, video_duration, 0
+    extended_clips = list(processed_clips)
+    final_clip = extended_clips[-1]
+    extensions = 0
+    while video_duration < required_video_duration:
+        extended_clips.append(final_clip)
+        video_duration += final_clip.duration
+        extensions += 1
+    return extended_clips, video_duration, extensions
+
+
+def _clip_duration_target_for_index(
+    clip_duration_targets: List[float] | None,
+    index: int,
+    fallback_duration: float,
+) -> float:
+    if not clip_duration_targets or index >= len(clip_duration_targets):
+        return float(fallback_duration)
+    try:
+        target = float(clip_duration_targets[index] or 0.0)
+    except (TypeError, ValueError):
+        return float(fallback_duration)
+    if target <= 0:
+        return float(fallback_duration)
+    return max(0.5, target)
+
+
 def combine_videos(
     combined_video_path: str,
     video_paths: List[str],
@@ -610,6 +647,7 @@ def combine_videos(
     max_clip_duration: int = 5,
     threads: int = 6,
     clip_speed: float = 1.0,
+    clip_duration_targets: List[float] | None = None,
 ) -> str:
     threads = max(1, min(6, os.cpu_count() or 6))
     audio_clip = AudioFileClip(audio_file)
@@ -639,7 +677,6 @@ def combine_videos(
     # 6 秒源画面同样会得到 3 秒片段。因此切片前必须按速度反推源时长；如果
     # 仍固定读取 3 秒再慢放、裁剪，下一段却从源视频第 3 秒开始，会跳过中间
     # 1.5 秒画面。该计算同时保证不同速度下的源时间线连续且无重叠。
-    source_clip_duration = max_clip_duration * normalized_clip_speed
     output_dir = os.path.dirname(combined_video_path)
 
     aspect = VideoAspect(video_aspect)
@@ -648,7 +685,13 @@ def combine_videos(
     processed_clips = []
     subclipped_items = []
     video_duration = 0
-    for video_path in video_paths:
+    for video_index, video_path in enumerate(video_paths):
+        target_clip_duration = _clip_duration_target_for_index(
+            clip_duration_targets,
+            video_index,
+            max_clip_duration,
+        )
+        source_clip_duration = target_clip_duration * normalized_clip_speed
         clip = _open_video_clip_quietly(video_path)
         clip_duration = clip.duration
         clip_w, clip_h = clip.size
@@ -670,12 +713,13 @@ def combine_videos(
                         end_time=end_time,
                         width=clip_w,
                         height=clip_h,
+                        duration=(end_time - start_time) / normalized_clip_speed,
                         source_file_path=video_path,
                     )
                 )
 
             start_time = end_time
-            if video_concat_mode.value == VideoConcatMode.sequential.value:
+            if clip_duration_targets or video_concat_mode.value == VideoConcatMode.sequential.value:
                 break
 
     subclipped_items = _prioritize_unique_source_clips(
@@ -756,8 +800,9 @@ def combine_videos(
                 shuffle_transition = random.choice(transition_funcs)
                 clip = shuffle_transition(clip)
 
-            if clip.duration > max_clip_duration:
-                clip = clip.subclipped(0, max_clip_duration)
+            clip_duration_limit = subclipped_item.duration or max_clip_duration
+            if clip.duration > clip_duration_limit:
+                clip = clip.subclipped(0, clip_duration_limit)
                 
             # wirte clip to temp file
             clip_file = f"{output_dir}/temp-clip-{i+1}.mp4"
@@ -789,22 +834,25 @@ def combine_videos(
         except Exception as e:
             logger.error(f"failed to process clip: {str(e)}")
     
-    # loop processed clips until the video duration covers the audio duration and the small safety margin.
-    if video_duration < required_video_duration:
+    # Do not replay the full visual sequence just to fill narration time.
+    # If upstream materials are still short, extend only the final scene as an explicit fallback.
+    if video_duration < required_video_duration and processed_clips:
         logger.warning(
             f"video duration ({video_duration:.2f}s) is shorter than required duration "
-            f"({required_video_duration:.2f}s), looping clips to match audio length."
+            f"({required_video_duration:.2f}s); extending final scene only instead of "
+            "looping the full sequence."
         )
-        base_clips = processed_clips.copy()
-        for clip in itertools.cycle(base_clips):
-            if video_duration >= required_video_duration:
-                break
-            processed_clips.append(clip)
-            video_duration += clip.duration
+        processed_clips, video_duration, final_scene_extensions = (
+            _extend_final_scene_without_sequence_loop(
+                processed_clips,
+                video_duration,
+                required_video_duration,
+            )
+        )
         logger.info(
             f"video duration: {video_duration:.2f}s, audio duration: {audio_duration:.2f}s, "
             f"required duration: {required_video_duration:.2f}s, "
-            f"looped {len(processed_clips)-len(base_clips)} clips"
+            f"final_scene_extensions={final_scene_extensions}"
         )
      
     # merge video clips progressively, avoid loading all videos at once to avoid memory overflow
