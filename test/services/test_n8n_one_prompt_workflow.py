@@ -26,6 +26,29 @@ class N8nOnePromptWorkflowTest(unittest.TestCase):
         self.assertIn("targetDurationSeconds=seconds", code)
         self.assertIn("flow_user_pexels", code)
 
+    def test_video_source_option_3_state_reaches_create_task_once(self):
+        code = _node("Command Router")["parameters"]["jsCode"]
+
+        self.assertIn("user.awaiting='video_material_source'", code)
+        self.assertIn("'3':{\n    key:'flow_user_pexels'", code)
+        self.assertIn("user.pending_material_source_mode=materialSourceMode", code)
+        self.assertIn("route='video'", code)
+        self.assertIn("scriptMode='auto'", code)
+
+        create_task_connections = _workflow()["connections"]["Create MoneyPrinterTurbo Task"]["main"]
+        self.assertEqual(len(create_task_connections), 1)
+
+    def test_workflow_export_does_not_overwrite_runtime_static_data(self):
+        self.assertNotIn("staticData", _workflow())
+
+    def test_build_fast_script_uses_global_regexes_with_match_all(self):
+        code = _node("Build Fast Script")["parameters"]["jsCode"]
+
+        self.assertIn(r"/ابدأ\s+ب([^\.\n]+)/ig", code)
+        self.assertIn(r"/واختتم\s+ب([^\.\n]+)/ig", code)
+        self.assertNotIn(r"/ابدأ\s+ب([^\.\n]+)/i,", code)
+        self.assertNotIn(r"/واختتم\s+ب([^\.\n]+)/i,", code)
+
     def test_build_fast_script_uses_requirements_not_raw_instruction_as_script(self):
         code = _node("Build Fast Script")["parameters"]["jsCode"]
 
