@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nif (!store.users) store.users={};\nif (!store.jobs) store.jobs=[];\n\nconst m=$json.message ?? {};\nconst text=(m.text ?? '').trim();\n\nconst chatId=m.chat?.id;\nconst telegramId=String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId]={\n    telegram_id:telegramId,\n    chat_id:chatId,\n    username:m.from?.username ?? '',\n    first_name:m.from?.first_name ?? '',\n    language:'ar-SA',\n    voice:'ar-SA-HamedNeural',\n    video_aspect:'9:16',\n\n    awaiting:null,\n\n    pending_title:null,\n    pending_topic:null,\n    pending_duration_seconds:null,\n    pending_duration_label:null,\n    pending_style:null,\n    pending_materials:[],\n    pending_flow_scene_id:null,\n    pending_flow_materials:[],\n\n    created_at:new Date().toISOString()\n  };\n}\n\nconst user=store.users[telegramId];\n\nif (!Array.isArray(user.pending_materials)) {\n  user.pending_materials=[];\n}\n\nif (!Array.isArray(user.pending_flow_materials)) {\n  user.pending_flow_materials=[];\n}\n\nif (\n  user.pending_flow_scene_id === undefined\n) {\n  user.pending_flow_scene_id=null;\n}\n\nif (\n  user.pending_duration_seconds === undefined\n) {\n  user.pending_duration_seconds=null;\n}\n\nif (\n  user.pending_duration_label === undefined\n) {\n  user.pending_duration_label=null;\n}\n\nuser.chat_id=chatId;\nuser.username=m.from?.username ?? user.username ?? '';\nuser.first_name=m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at=new Date().toISOString();\n\n\n// ========================================================\n// MATERIAL DETECTION\n// ========================================================\n\nconst photos=\n  Array.isArray(m.photo)\n    ? m.photo\n    : [];\n\nlet incomingMaterial=null;\n\nif (photos.length) {\n\n  const photo=\n    photos[photos.length-1];\n\n  incomingMaterial={\n    type:'image',\n    file_id:photo.file_id,\n    extension:'jpg',\n    mime_type:'image/jpeg'\n  };\n\n} else if (m.video?.file_id) {\n\n  const name=String(\n    m.video.file_name || ''\n  );\n\n  const ext=\n    name.includes('.')\n      ? name.split('.').pop().toLowerCase()\n      : 'mp4';\n\n  incomingMaterial={\n    type:'video',\n    file_id:m.video.file_id,\n    extension:ext || 'mp4',\n    mime_type:m.video.mime_type || 'video/mp4'\n  };\n\n} else if (m.document?.file_id) {\n\n  const mime=String(\n    m.document.mime_type || ''\n  ).toLowerCase();\n\n  if (\n    mime.startsWith('image/') ||\n    mime.startsWith('video/')\n  ) {\n\n    const name=String(\n      m.document.file_name || ''\n    );\n\n    let ext=\n      name.includes('.')\n        ? name.split('.').pop().toLowerCase()\n        : '';\n\n    if (!ext) {\n      const extensionMap={\n        'image/jpeg':'jpg',\n        'image/png':'png',\n        'video/mp4':'mp4',\n        'video/quicktime':'mov'\n      };\n\n      ext=\n        extensionMap[mime]\n        || 'mp4';\n    }\n\n    incomingMaterial={\n      type:\n        mime.startsWith('image/')\n          ? 'image'\n          : 'video',\n\n      file_id:m.document.file_id,\n      extension:ext,\n      mime_type:mime\n    };\n  }\n}\n\n\n// ========================================================\n// VISUAL STYLES\n// ========================================================\n\nconst STYLE_OPTIONS={\n  '1':{\n    key:'realistic',\n    label:'واقعي'\n  },\n  '2':{\n    key:'cartoon',\n    label:'كرتوني'\n  },\n  '3':{\n    key:'illustration',\n    label:'رسومي / Motion Graphics'\n  },\n  '4':{\n    key:'3d',\n    label:'ثلاثي الأبعاد 3D'\n  },\n  '5':{\n    key:'futuristic',\n    label:'تقني / مستقبلي'\n  },\n  '6':{\n    key:'auto',\n    label:'تلقائي'\n  }\n};\n\nfunction resolveStyle(value) {\n  const raw=String(value || '')\n    .trim()\n    .toLowerCase();\n\n  if (STYLE_OPTIONS[raw]) {\n    return STYLE_OPTIONS[raw];\n  }\n\n  const aliases={\n    'واقعي':'1',\n    'realistic':'1',\n\n    'كرتوني':'2',\n    'كرتون':'2',\n    'cartoon':'2',\n\n    'رسومي':'3',\n    'رسوم':'3',\n    'illustration':'3',\n    'motion graphics':'3',\n\n    '3d':'4',\n    'ثلاثي الأبعاد':'4',\n    'ثلاثي الابعاد':'4',\n\n    'تقني':'5',\n    'مستقبلي':'5',\n    'futuristic':'5',\n\n    'تلقائي':'6',\n    'auto':'6'\n  };\n\n  const id=aliases[raw];\n\n  return id\n    ? STYLE_OPTIONS[id]\n    : null;\n}\n\nfunction styleMenu(prefix='') {\n  return `${prefix}🎨 اختر نمط المشاهد:\n\n1️⃣ واقعي\n2️⃣ كرتوني\n3️⃣ رسومي / Motion Graphics\n4️⃣ ثلاثي الأبعاد 3D\n5️⃣ تقني / مستقبلي\n6️⃣ تلقائي\n\nأرسل الرقم من 1 إلى 6.`;\n}\n\n\n// ========================================================\n// VIDEO DURATION\n// ========================================================\n\nconst DURATION_OPTIONS={\n  '1':{\n    seconds:30,\n    label:'30 ثانية'\n  },\n  '2':{\n    seconds:45,\n    label:'45 ثانية'\n  },\n  '3':{\n    seconds:60,\n    label:'60 ثانية'\n  },\n  '4':{\n    seconds:90,\n    label:'90 ثانية'\n  },\n  '5':{\n    seconds:120,\n    label:'دقيقتان'\n  },\n  '7':{\n    seconds:0,\n    label:'تلقائي'\n  }\n};\n\nfunction resolveDuration(value) {\n  const raw=String(value || '')\n    .trim()\n    .toLowerCase();\n\n  if (DURATION_OPTIONS[raw]) {\n    return DURATION_OPTIONS[raw];\n  }\n\n  const aliases={\n    '30':'1',\n    '30 ثانية':'1',\n\n    '45':'2',\n    '45 ثانية':'2',\n\n    '60':'3',\n    'دقيقة':'3',\n    '1 دقيقة':'3',\n\n    '90':'4',\n    '90 ثانية':'4',\n\n    '120':'5',\n    'دقيقتان':'5',\n    '2 دقيقة':'5',\n\n    'تلقائي':'7',\n    'auto':'7'\n  };\n\n  const id=aliases[raw];\n\n  return id\n    ? DURATION_OPTIONS[id]\n    : null;\n}\n\nfunction durationMenu(prefix='') {\n  return `${prefix}⏱ اختر مدة الفيديو:\n\n1️⃣ 30 ثانية\n2️⃣ 45 ثانية\n3️⃣ 60 ثانية\n4️⃣ 90 ثانية\n5️⃣ دقيقتان\n6️⃣ مدة مخصصة\n7️⃣ تلقائي حسب المحتوى\n\nأرسل الرقم من 1 إلى 7.`;\n}\n\nfunction parseCustomDuration(value) {\n  const raw=String(value || '')\n    .replace(/[^\\d]/g,'');\n\n  const seconds=Number(raw);\n\n  if (\n    !Number.isInteger(seconds) ||\n    seconds < 15 ||\n    seconds > 300\n  ) {\n    return null;\n  }\n\n  return seconds;\n}\n\nfunction estimateScriptSeconds(script) {\n  const words=String(script || '')\n    .trim()\n    .split(/\\s+/)\n    .filter(Boolean)\n    .length;\n\n  if (!words) {\n    return 0;\n  }\n\n  // Conservative estimate for Arabic narration.\n  return Math.max(\n    1,\n    Math.round(words / 2.15)\n  );\n}\n\n// ========================================================\n// PINGOO_NOTEBOOKLM_HANDOFF_V1\n// ========================================================\n\nconst NOTEBOOK_FIELDS=[\n  'TITLE',\n  'TOPIC',\n  'DURATION',\n  'STYLE',\n  'SCRIPT',\n  'VISUAL_NOTES',\n  'SOURCES'\n];\n\nfunction parseNotebookPackage(value) {\n  const sections={};\n  let current=null;\n  let currentLines=[];\n\n  function flush() {\n    if (current) {\n      sections[current]=\n        currentLines.join('\\n').trim();\n    }\n  }\n\n  const lines=String(value || '')\n    .replace(/\\r\\n/g,'\\n')\n    .replace(/\\r/g,'\\n')\n    .split('\\n');\n\n  for (const line of lines) {\n    const match=line.match(\n      /^\\s*(TITLE|TOPIC|DURATION|STYLE|SCRIPT|VISUAL_NOTES|SOURCES)\\s*:\\s*(.*)$/i\n    );\n\n    if (match) {\n      flush();\n      current=match[1].toUpperCase();\n      currentLines=[];\n\n      if (match[2]) {\n        currentLines.push(match[2]);\n      }\n\n      continue;\n    }\n\n    if (current) {\n      currentLines.push(line);\n    }\n  }\n\n  flush();\n  return sections;\n}\n\nfunction notebookSourceCount(value) {\n  return String(value || '')\n    .split(/\\n+/)\n    .map(x => x.trim())\n    .filter(Boolean)\n    .length;\n}\n\n\n// ========================================================\n// COMMON OUTPUT\n// ========================================================\n\nlet command='';\n\nif (text.startsWith('/')) {\n  command=text\n    .split(/\\s+/)[0]\n    .split('@')[0]\n    .toLowerCase();\n}\n\nlet route='reply';\nlet reply='';\n\nlet videoTitle='';\nlet videoSubject='';\nlet videoScript='';\nlet scriptMode='';\n\nlet visualStyle='auto';\nlet visualStyleLabel='تلقائي';\n\nlet targetDurationSeconds=0;\nlet targetDurationLabel='تلقائي';\n\nlet taskId='';\n\nlet materialFileId='';\nlet materialExtension='';\nlet materialMimeType='';\n\nlet supplementalMaterials=[];\nlet flowMaterials=[];\n\nlet contentVisualNotes='';\nlet contentSources='';\nlet contentSourcesCount=0;\n\n\n// ========================================================\n// MATERIALS\n// ========================================================\n\nif (\n  command === '/clean_cache' ||\n  text === '🧹 تنظيف الكاش'\n) {\n\n  route='cache_cleanup';\n  reply='';\n\n} else if (command === '/flow') {\n\n  user.awaiting='flow_scene_id';\n  user.pending_flow_scene_id=null;\n\n  reply=\n`🎨 Google Flow Materials\n\nأرسل رقم المشهد الذي تريد إضافة مادة Flow له.\n\nمثال:\n3`;\n\n} else if (\n  !command &&\n  user.awaiting === 'flow_scene_id' &&\n  text\n) {\n\n  const sceneId=\n    Number(\n      String(text || '').trim()\n    );\n\n  if (\n    !Number.isInteger(sceneId) ||\n    sceneId < 1\n  ) {\n\n    reply=\n`❌ رقم المشهد غير صحيح.\n\nأرسل رقمًا صحيحًا أكبر من أو يساوي 1.`;\n\n  } else {\n\n    user.pending_flow_scene_id=sceneId;\n    user.awaiting='flow_material';\n\n    reply=\n`✅ المشهد رقم ${sceneId}\n\nالآن أرسل صورة أو فيديو تم إنتاجه في Google Flow.`;\n  }\n\n} else if (command === '/materials') {\n\n  user.awaiting='materials';\n  user.pending_materials=[];\n\n  reply=\n`📎 إضافة مواد\n\nأرسل الصور أو الفيديوهات التي تريد استخدامها.\n\nيمكنك إرسال عدة ملفات، واحدًا بعد الآخر.\n\nعند الانتهاء أرسل:\n/done`;\n\n} else if (\n  !command &&\n  incomingMaterial &&\n  user.awaiting === 'flow_material' &&\n  Number(user.pending_flow_scene_id || 0) >= 1\n) {\n\n  route='flow_material_upload';\n\n  materialFileId=\n    incomingMaterial.file_id;\n\n  materialExtension=\n    incomingMaterial.extension;\n\n  materialMimeType=\n    incomingMaterial.mime_type;\n\n  reply='';\n\n} else if (\n  !command &&\n  incomingMaterial\n) {\n\n  route='material_upload';\n\n  materialFileId=\n    incomingMaterial.file_id;\n\n  materialExtension=\n    incomingMaterial.extension;\n\n  materialMimeType=\n    incomingMaterial.mime_type;\n\n  reply='';\n\n} else if (\n  command === '/done' &&\n  (\n    user.awaiting === 'materials' ||\n    user.awaiting === 'flow_material' ||\n    user.awaiting === 'flow_scene_id' ||\n    user.awaiting === 'flow_material_done'\n  )\n) {\n\n  user.awaiting=null;\n  user.pending_flow_scene_id=null;\n\n  reply=\n`✅ انتهت إضافة المواد.\n\n📎 سيتم التحقق من الملفات الفعلية على السيرفر عند بدء الفيديو.\n\nالآن استخدم:\n/script\nأو\n/video\nأو\n/notebook`;\n\n} else if (\n  !command &&\n  incomingMaterial\n) {\n\n  reply=\n`📎 لإضافة صورة أو فيديو كمادة مساعدة استخدم أولًا:\n\n/materials`;\n\n\n// ========================================================\n// START\n// ========================================================\n\n} else if (command === '/start') {\n\n  user.awaiting=null;\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n  user.pending_flow_scene_id=null;\n  user.pending_flow_materials=[];\n\n  reply=\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو تلقائي\n/script إدخال سكربت يدوي\n/notebook بحث وإنتاج من NotebookLM\n/flow إضافة مواد مولدة من Google Flow\n/materials إضافة صور أو فيديوهات\n/clean_cache تنظيف الكاش\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n\n// ========================================================\n// /NOTEBOOK NOTEBOOKLM HANDOFF\n// ========================================================\n\n} else if (command === '/notebook') {\n\n  user.awaiting='notebook_package';\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n\n  reply=\n`📚 وضع NotebookLM\n\nجهّز المحتوى في NotebookLM ثم أرسل حزمة الإنتاج هنا.\n\nالصيغة المطلوبة:\n\nTITLE:\n...\n\nTOPIC:\n...\n\nDURATION:\n60\n\nSTYLE:\nfuturistic\n\nSCRIPT:\n...\n\nVISUAL_NOTES:\n...\n\nSOURCES:\n...`;\n\n} else if (\n  !command &&\n  user.awaiting === 'notebook_package' &&\n  text\n) {\n\n  const pkg=\n    parseNotebookPackage(text);\n\n  const required=[\n    'TITLE',\n    'TOPIC',\n    'SCRIPT'\n  ];\n\n  const missing=\n    required.find(\n      key => !String(pkg[key] || '').trim()\n    );\n\n  if (missing) {\n\n    reply=\n`❌ حزمة NotebookLM غير مكتملة.\n\nالحقل الناقص:\n${missing}\n\nأرسل الحزمة كاملة من جديد.`;\n\n  } else {\n\n    const rawDuration=\n      String(pkg.DURATION || 'auto')\n        .trim();\n\n    let parsedDuration=null;\n\n    if (\n      !rawDuration ||\n      rawDuration.toLowerCase() === 'auto' ||\n      rawDuration === 'تلقائي'\n    ) {\n      parsedDuration={\n        seconds:0,\n        label:'تلقائي'\n      };\n    } else {\n      const seconds=\n        parseCustomDuration(rawDuration);\n\n      if (seconds) {\n        parsedDuration={\n          seconds,\n          label:`${seconds} ثانية`\n        };\n      }\n    }\n\n    if (!parsedDuration) {\n\n      reply=\n`❌ مدة NotebookLM غير صحيحة.\n\nالمسموح:\n15-300 ثانية أو auto.\n\nأرسل الحزمة كاملة من جديد.`;\n\n    } else {\n\n      const selected=\n        resolveStyle(pkg.STYLE || 'auto');\n\n      if (!selected) {\n\n        reply=\n`❌ نمط NotebookLM غير صحيح.\n\nالمسموح:\nrealistic\ncartoon\nillustration\n3d\nfuturistic\nauto\n\nأرسل الحزمة كاملة من جديد.`;\n\n      } else {\n\n        videoTitle=String(pkg.TITLE || '').trim();\n        videoSubject=String(pkg.TOPIC || '').trim();\n        videoScript=String(pkg.SCRIPT || '').trim();\n\n        visualStyle=selected.key;\n        visualStyleLabel=selected.label;\n\n        targetDurationSeconds=parsedDuration.seconds;\n        targetDurationLabel=parsedDuration.label;\n\n        contentVisualNotes=\n          String(pkg.VISUAL_NOTES || '').trim();\n\n        contentSources=\n          String(pkg.SOURCES || '').trim();\n\n        contentSourcesCount=\n          notebookSourceCount(contentSources);\n\n        user.awaiting=null;\n        user.pending_title=null;\n        user.pending_topic=null;\n        user.pending_duration_seconds=null;\n        user.pending_duration_label=null;\n        user.pending_style=null;\n        user.pending_notebook_package={\n          title:videoTitle,\n          topic:videoSubject,\n          duration:targetDurationLabel,\n          style:visualStyle,\n          visual_notes:contentVisualNotes,\n          sources:contentSources\n        };\n\n        route='video';\n        scriptMode='notebook';\n\n        reply=\n`✅ تم استلام حزمة NotebookLM.\n\n🎬 العنوان:\n${videoTitle}\n\n📝 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 النمط:\n${visualStyleLabel}\n\n📚 المصادر:\n${contentSourcesCount}\n\nجاري إنشاء الفيديو...`;\n      }\n    }\n  }\n\n\n// ========================================================\n// /VIDEO AUTO\n// ========================================================\n\n} else if (command === '/video') {\n\n  videoSubject=text\n    .replace(/^\\/video(?:@\\w+)?/i,'')\n    .trim();\n\n  user.pending_title=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n\n  if (!videoSubject) {\n\n    user.awaiting='video_topic';\n    user.pending_topic=null;\n\n    reply=\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nفوائد النوم وتأثيره على الدماغ`;\n\n  } else {\n\n    user.pending_topic=videoSubject;\n    user.awaiting='video_duration';\n\n    reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${videoSubject}\n\n`\n    );\n  }\n\n\n// ========================================================\n// /SCRIPT MANUAL\n// ========================================================\n\n} else if (command === '/script') {\n\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n\n  user.awaiting='manual_title';\n\n  reply=\n`✍️ وضع السكربت اليدوي\n\n1️⃣ أرسل الآن عنوان الفيديو.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_title' &&\n  text\n) {\n\n  user.pending_title=text;\n  user.awaiting='manual_topic';\n\n  reply=\n`✅ تم حفظ العنوان:\n${text}\n\n2️⃣ أرسل الآن موضوع الفيديو.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_topic' &&\n  text\n) {\n\n  user.pending_topic=text;\n  user.awaiting='manual_duration';\n\n  reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${text}\n\n3️⃣ `\n  );\n\n\n// ========================================================\n// MANUAL DURATION\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_duration' &&\n  text\n) {\n\n  if (text.trim() === '6') {\n\n    user.awaiting='manual_duration_custom';\n\n    reply=\n`⏱ أرسل المدة المطلوبة بالثواني.\n\nالحد الأدنى: 15 ثانية\nالحد الأعلى: 300 ثانية\n\nمثال:\n75`;\n\n  } else {\n\n    const duration=\n      resolveDuration(text);\n\n    if (!duration) {\n\n      reply=durationMenu(\n`❌ اختيار المدة غير صحيح.\n\n`\n      );\n\n    } else {\n\n      user.pending_duration_seconds=\n        duration.seconds;\n\n      user.pending_duration_label=\n        duration.label;\n\n      user.awaiting='manual_style';\n\n      reply=styleMenu(\n`✅ مدة الفيديو:\n${duration.label}\n\n4️⃣ `\n      );\n    }\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_duration_custom' &&\n  text\n) {\n\n  const seconds=\n    parseCustomDuration(text);\n\n  if (!seconds) {\n\n    reply=\n`❌ المدة غير صحيحة.\n\nأرسل رقمًا بين 15 و300 ثانية.`;\n\n  } else {\n\n    user.pending_duration_seconds=seconds;\n    user.pending_duration_label=\n      `${seconds} ثانية`;\n\n    user.awaiting='manual_style';\n\n    reply=styleMenu(\n`✅ مدة الفيديو المستهدفة:\n${seconds} ثانية\n\n4️⃣ `\n    );\n  }\n\n\n// ========================================================\n// MANUAL STYLE\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_style' &&\n  text\n) {\n\n  const selected=\n    resolveStyle(text);\n\n  if (!selected) {\n\n    reply=styleMenu(\n`❌ الاختيار غير صحيح.\n\n`\n    );\n\n  } else {\n\n    user.pending_style=selected.key;\n    user.awaiting='manual_script';\n\n    reply=\n`✅ نمط المشاهد:\n${selected.label}\n\n5️⃣ أرسل الآن السكربت كاملًا.`;\n  }\n\n\n// ========================================================\n// MANUAL SCRIPT\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_script' &&\n  text\n) {\n\n  const target=\n    Number(\n      user.pending_duration_seconds || 0\n    );\n\n  const estimated=\n    estimateScriptSeconds(text);\n\n  const tolerance=\n    target > 0\n      ? Math.max(\n          8,\n          Math.round(target * 0.25)\n        )\n      : 0;\n\n  if (\n    target > 0 &&\n    Math.abs(estimated-target) > tolerance\n  ) {\n\n    reply=\n`⚠️ السكربت لا يناسب المدة المستهدفة.\n\n⏱ المدة المستهدفة:\n${user.pending_duration_label}\n\n📝 المدة المتوقعة للسكربت:\nحوالي ${estimated} ثانية\n\nأرسل سكربت أقصر أو أطول ليقترب من المدة المطلوبة.\n\nلن نقوم بقص الكلام أو تسريع الصوت تلقائيًا.`;\n\n  } else {\n\n    videoTitle=String(\n      user.pending_title || ''\n    ).trim();\n\n    videoSubject=String(\n      user.pending_topic || ''\n    ).trim();\n\n    const selected=\n      Object.values(STYLE_OPTIONS)\n        .find(\n          s => s.key === user.pending_style\n        )\n      || STYLE_OPTIONS['6'];\n\n    visualStyle=selected.key;\n    visualStyleLabel=selected.label;\n\n    targetDurationSeconds=\n      Number(\n        user.pending_duration_seconds || 0\n      );\n\n    targetDurationLabel=\n      user.pending_duration_label\n      || 'تلقائي';\n\n    videoScript=text;\n\n    user.awaiting=null;\n    user.pending_title=null;\n    user.pending_topic=null;\n    user.pending_duration_seconds=null;\n    user.pending_duration_label=null;\n    user.pending_style=null;\n\n    route='video';\n    scriptMode='manual';\n\n    reply=\n`✅ تم استلام السكربت اليدوي.\n\n🎬 العنوان:\n${videoTitle}\n\n📝 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 نمط المشاهد:\n${visualStyleLabel}\n\nجاري إنشاء الفيديو...`;\n  }\n\n\n// ========================================================\n// AUTO VIDEO TOPIC\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_topic' &&\n  text\n) {\n\n  user.pending_topic=text;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n\n  user.awaiting='video_duration';\n\n  reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${text}\n\n`\n  );\n\n\n// ========================================================\n// AUTO VIDEO DURATION\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_duration' &&\n  text\n) {\n\n  if (text.trim() === '6') {\n\n    user.awaiting='video_duration_custom';\n\n    reply=\n`⏱ أرسل المدة المطلوبة بالثواني.\n\nالحد الأدنى: 15 ثانية\nالحد الأعلى: 300 ثانية\n\nمثال:\n75`;\n\n  } else {\n\n    const duration=\n      resolveDuration(text);\n\n    if (!duration) {\n\n      reply=durationMenu(\n`❌ اختيار المدة غير صحيح.\n\n`\n      );\n\n    } else {\n\n      user.pending_duration_seconds=\n        duration.seconds;\n\n      user.pending_duration_label=\n        duration.label;\n\n      user.awaiting='video_style';\n\n      reply=styleMenu(\n`✅ مدة الفيديو:\n${duration.label}\n\n`\n      );\n    }\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'video_duration_custom' &&\n  text\n) {\n\n  const seconds=\n    parseCustomDuration(text);\n\n  if (!seconds) {\n\n    reply=\n`❌ المدة غير صحيحة.\n\nأرسل رقمًا بين 15 و300 ثانية.`;\n\n  } else {\n\n    user.pending_duration_seconds=seconds;\n    user.pending_duration_label=\n      `${seconds} ثانية`;\n\n    user.awaiting='video_style';\n\n    reply=styleMenu(\n`✅ مدة الفيديو:\n${seconds} ثانية\n\n`\n    );\n  }\n\n\n// ========================================================\n// AUTO VIDEO STYLE\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_style' &&\n  text\n) {\n\n  const selected=\n    resolveStyle(text);\n\n  if (!selected) {\n\n    reply=styleMenu(\n`❌ الاختيار غير صحيح.\n\n`\n    );\n\n  } else {\n\n    videoSubject=String(\n      user.pending_topic || ''\n    ).trim();\n\n    visualStyle=selected.key;\n    visualStyleLabel=selected.label;\n\n    targetDurationSeconds=\n      Number(\n        user.pending_duration_seconds || 0\n      );\n\n    targetDurationLabel=\n      user.pending_duration_label\n      || 'تلقائي';\n\n    user.awaiting=null;\n    user.pending_topic=null;\n    user.pending_duration_seconds=null;\n    user.pending_duration_label=null;\n    user.pending_style=null;\n\n    route='video';\n    scriptMode='auto';\n\n    reply=\n`⏳ تم استلام الطلب.\n\n🎬 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 نمط المشاهد:\n${visualStyleLabel}\n\nجاري تجهيز الفيديو...`;\n  }\n\n\n// ========================================================\n// STATUS / HISTORY / SETTINGS / CANCEL\n// ========================================================\n\n} else if (command === '/status') {\n\n  const job=store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n\n    reply='📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n\n  } else {\n\n    route='status';\n    taskId=job.task_id;\n  }\n\n} else if (command === '/history') {\n\n  const jobs=store.jobs\n    .filter(\n      j => String(j.telegram_id) === telegramId\n    )\n    .slice(0,5);\n\n  if (!jobs.length) {\n\n    reply='📚 السجل فارغ.';\n\n  } else {\n\n    reply=\n      '📚 آخر المهام\\n\\n' +\n      jobs.map(\n        (j,i) =>\n`${i+1}. ${j.title || j.topic}\n${j.task_id}\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply=\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}\n\n⏱ مدة الفيديو:\nيتم اختيارها لكل فيديو\n\n🎨 نمط المشاهد:\nيتم اختياره لكل فيديو\n\nNotebookLM import: enabled\nGoogle Flow materials: enabled`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting=null;\n\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n  user.pending_flow_scene_id=null;\n  user.pending_flow_materials=[];\n  user.pending_materials=[];\n\n  reply='❌ تم إلغاء أي طلب إدخال غير مكتمل.';\n\n} else {\n\n  reply=\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\n\n// ========================================================\n// MATERIALS FOR VIDEO TASK\n// ========================================================\n\nif (route === 'video') {\n\n  supplementalMaterials=\n    Array.isArray(user.pending_materials)\n      ? [...user.pending_materials]\n      : [];\n\n  flowMaterials=\n    Array.isArray(user.pending_flow_materials)\n      ? [...user.pending_flow_materials]\n      : [];\n}\n\n\n// ========================================================\n// OUTPUT\n// ========================================================\n\nreturn [{\n  json:{\n    chat_id:chatId,\n    telegram_id:telegramId,\n    username:user.username,\n\n    command,\n    route,\n    task_id:taskId,\n\n    video_title:videoTitle,\n    video_subject:videoSubject,\n    video_script:videoScript,\n\n    script_mode:scriptMode,\n\n    visual_style:visualStyle,\n    visual_style_label:visualStyleLabel,\n\n    target_duration_seconds:\n      targetDurationSeconds,\n\n    target_duration_label:\n      targetDurationLabel,\n\n    content_visual_notes:\n      contentVisualNotes,\n\n    content_sources:\n      contentSources,\n\n    content_sources_count:\n      contentSourcesCount,\n\n    video_language:user.language,\n    voice_name:user.voice,\n    video_aspect:user.video_aspect,\n\n    material_file_id:materialFileId,\n    material_extension:materialExtension,\n    material_mime_type:materialMimeType,\n\n    pending_flow_scene_id:\n      Number(user.pending_flow_scene_id || 0),\n\n    supplemental_materials:\n      supplementalMaterials,\n\n    supplemental_materials_count:\n      supplementalMaterials.length,\n\n    flow_materials:\n      flowMaterials,\n\n    flow_materials_count:\n      flowMaterials.length,\n\n    reply\n  }\n}];\n"
+        "jsCode": "\nconst store=$getWorkflowStaticData('global');\n\nif (!store.users) store.users={};\nif (!store.jobs) store.jobs=[];\n\nconst m=$json.message ?? {};\nconst text=(m.text ?? '').trim();\n\nconst chatId=m.chat?.id;\nconst telegramId=String(m.from?.id ?? '');\n\nif (!chatId || !telegramId) {\n  return [];\n}\n\nif (!store.users[telegramId]) {\n  store.users[telegramId]={\n    telegram_id:telegramId,\n    chat_id:chatId,\n    username:m.from?.username ?? '',\n    first_name:m.from?.first_name ?? '',\n    language:'ar-SA',\n    voice:'ar-SA-HamedNeural',\n    video_aspect:'9:16',\n\n    awaiting:null,\n\n    pending_title:null,\n    pending_topic:null,\n    pending_duration_seconds:null,\n    pending_duration_label:null,\n    pending_style:null,\n    pending_materials:[],\n    pending_flow_scene_id:null,\n    pending_flow_materials:[],\n\n    created_at:new Date().toISOString()\n  };\n}\n\nconst user=store.users[telegramId];\n\nif (!Array.isArray(user.pending_materials)) {\n  user.pending_materials=[];\n}\n\nif (!Array.isArray(user.pending_flow_materials)) {\n  user.pending_flow_materials=[];\n}\n\nif (\n  user.pending_flow_scene_id === undefined\n) {\n  user.pending_flow_scene_id=null;\n}\n\nif (\n  user.pending_duration_seconds === undefined\n) {\n  user.pending_duration_seconds=null;\n}\n\nif (\n  user.pending_duration_label === undefined\n) {\n  user.pending_duration_label=null;\n}\n\nuser.chat_id=chatId;\nuser.username=m.from?.username ?? user.username ?? '';\nuser.first_name=m.from?.first_name ?? user.first_name ?? '';\nuser.last_seen_at=new Date().toISOString();\n\n\n// ========================================================\n// MATERIAL DETECTION\n// ========================================================\n\nconst photos=\n  Array.isArray(m.photo)\n    ? m.photo\n    : [];\n\nlet incomingMaterial=null;\n\nif (photos.length) {\n\n  const photo=\n    photos[photos.length-1];\n\n  incomingMaterial={\n    type:'image',\n    file_id:photo.file_id,\n    extension:'jpg',\n    mime_type:'image/jpeg'\n  };\n\n} else if (m.video?.file_id) {\n\n  const name=String(\n    m.video.file_name || ''\n  );\n\n  const ext=\n    name.includes('.')\n      ? name.split('.').pop().toLowerCase()\n      : 'mp4';\n\n  incomingMaterial={\n    type:'video',\n    file_id:m.video.file_id,\n    extension:ext || 'mp4',\n    mime_type:m.video.mime_type || 'video/mp4'\n  };\n\n} else if (m.document?.file_id) {\n\n  const mime=String(\n    m.document.mime_type || ''\n  ).toLowerCase();\n\n  if (\n    mime.startsWith('image/') ||\n    mime.startsWith('video/')\n  ) {\n\n    const name=String(\n      m.document.file_name || ''\n    );\n\n    let ext=\n      name.includes('.')\n        ? name.split('.').pop().toLowerCase()\n        : '';\n\n    if (!ext) {\n      const extensionMap={\n        'image/jpeg':'jpg',\n        'image/png':'png',\n        'video/mp4':'mp4',\n        'video/quicktime':'mov'\n      };\n\n      ext=\n        extensionMap[mime]\n        || 'mp4';\n    }\n\n    incomingMaterial={\n      type:\n        mime.startsWith('image/')\n          ? 'image'\n          : 'video',\n\n      file_id:m.document.file_id,\n      extension:ext,\n      mime_type:mime\n    };\n  }\n}\n\n\n// ========================================================\n// VISUAL STYLES\n// ========================================================\n\nconst STYLE_OPTIONS={\n  '1':{\n    key:'realistic',\n    label:'واقعي'\n  },\n  '2':{\n    key:'cartoon',\n    label:'كرتوني'\n  },\n  '3':{\n    key:'illustration',\n    label:'رسومي / Motion Graphics'\n  },\n  '4':{\n    key:'3d',\n    label:'ثلاثي الأبعاد 3D'\n  },\n  '5':{\n    key:'futuristic',\n    label:'تقني / مستقبلي'\n  },\n  '6':{\n    key:'auto',\n    label:'تلقائي'\n  }\n};\n\nfunction resolveStyle(value) {\n  const raw=String(value || '')\n    .trim()\n    .toLowerCase();\n\n  if (STYLE_OPTIONS[raw]) {\n    return STYLE_OPTIONS[raw];\n  }\n\n  const aliases={\n    'واقعي':'1',\n    'realistic':'1',\n\n    'كرتوني':'2',\n    'كرتون':'2',\n    'cartoon':'2',\n\n    'رسومي':'3',\n    'رسوم':'3',\n    'illustration':'3',\n    'motion graphics':'3',\n\n    '3d':'4',\n    'ثلاثي الأبعاد':'4',\n    'ثلاثي الابعاد':'4',\n\n    'تقني':'5',\n    'مستقبلي':'5',\n    'futuristic':'5',\n\n    'تلقائي':'6',\n    'auto':'6'\n  };\n\n  const id=aliases[raw];\n\n  return id\n    ? STYLE_OPTIONS[id]\n    : null;\n}\n\nfunction styleMenu(prefix='') {\n  return `${prefix}🎨 اختر نمط المشاهد:\n\n1️⃣ واقعي\n2️⃣ كرتوني\n3️⃣ رسومي / Motion Graphics\n4️⃣ ثلاثي الأبعاد 3D\n5️⃣ تقني / مستقبلي\n6️⃣ تلقائي\n\nأرسل الرقم من 1 إلى 6.`;\n}\n\n\n// ========================================================\n// VIDEO DURATION\n// ========================================================\n\nconst DURATION_OPTIONS={\n  '1':{\n    seconds:30,\n    label:'30 ثانية'\n  },\n  '2':{\n    seconds:45,\n    label:'45 ثانية'\n  },\n  '3':{\n    seconds:60,\n    label:'60 ثانية'\n  },\n  '4':{\n    seconds:90,\n    label:'90 ثانية'\n  },\n  '5':{\n    seconds:120,\n    label:'دقيقتان'\n  },\n  '7':{\n    seconds:0,\n    label:'تلقائي'\n  }\n};\n\nfunction resolveDuration(value) {\n  const raw=String(value || '')\n    .trim()\n    .toLowerCase();\n\n  if (DURATION_OPTIONS[raw]) {\n    return DURATION_OPTIONS[raw];\n  }\n\n  const aliases={\n    '30':'1',\n    '30 ثانية':'1',\n\n    '45':'2',\n    '45 ثانية':'2',\n\n    '60':'3',\n    'دقيقة':'3',\n    '1 دقيقة':'3',\n\n    '90':'4',\n    '90 ثانية':'4',\n\n    '120':'5',\n    'دقيقتان':'5',\n    '2 دقيقة':'5',\n\n    'تلقائي':'7',\n    'auto':'7'\n  };\n\n  const id=aliases[raw];\n\n  return id\n    ? DURATION_OPTIONS[id]\n    : null;\n}\n\nfunction durationMenu(prefix='') {\n  return `${prefix}⏱ اختر مدة الفيديو:\n\n1️⃣ 30 ثانية\n2️⃣ 45 ثانية\n3️⃣ 60 ثانية\n4️⃣ 90 ثانية\n5️⃣ دقيقتان\n6️⃣ مدة مخصصة\n7️⃣ تلقائي حسب المحتوى\n\nأرسل الرقم من 1 إلى 7.`;\n}\n\nfunction parseCustomDuration(value) {\n  const raw=String(value || '')\n    .replace(/[^\\d]/g,'');\n\n  const seconds=Number(raw);\n\n  if (\n    !Number.isInteger(seconds) ||\n    seconds < 15 ||\n    seconds > 300\n  ) {\n    return null;\n  }\n\n  return seconds;\n}\n\nfunction estimateScriptSeconds(script) {\n  const words=String(script || '')\n    .trim()\n    .split(/\\s+/)\n    .filter(Boolean)\n    .length;\n\n  if (!words) {\n    return 0;\n  }\n\n  // Conservative estimate for Arabic narration.\n  return Math.max(\n    1,\n    Math.round(words / 2.15)\n  );\n}\n\n// ========================================================\n// PINGOO_NOTEBOOKLM_HANDOFF_V1\n// ========================================================\n\nconst NOTEBOOK_FIELDS=[\n  'TITLE',\n  'TOPIC',\n  'DURATION',\n  'STYLE',\n  'SCRIPT',\n  'VISUAL_NOTES',\n  'SOURCES'\n];\n\nfunction parseNotebookPackage(value) {\n  const sections={};\n  let current=null;\n  let currentLines=[];\n\n  function flush() {\n    if (current) {\n      sections[current]=\n        currentLines.join('\\n').trim();\n    }\n  }\n\n  const lines=String(value || '')\n    .replace(/\\r\\n/g,'\\n')\n    .replace(/\\r/g,'\\n')\n    .split('\\n');\n\n  for (const line of lines) {\n    const match=line.match(\n      /^\\s*(TITLE|TOPIC|DURATION|STYLE|SCRIPT|VISUAL_NOTES|SOURCES)\\s*:\\s*(.*)$/i\n    );\n\n    if (match) {\n      flush();\n      current=match[1].toUpperCase();\n      currentLines=[];\n\n      if (match[2]) {\n        currentLines.push(match[2]);\n      }\n\n      continue;\n    }\n\n    if (current) {\n      currentLines.push(line);\n    }\n  }\n\n  flush();\n  return sections;\n}\n\nfunction notebookSourceCount(value) {\n  return String(value || '')\n    .split(/\\n+/)\n    .map(x => x.trim())\n    .filter(Boolean)\n    .length;\n}\n\n\n// ========================================================\n// COMMON OUTPUT\n// ========================================================\n\nlet command='';\n\nif (text.startsWith('/')) {\n  command=text\n    .split(/\\s+/)[0]\n    .split('@')[0]\n    .toLowerCase();\n}\n\nlet route='reply';\nlet reply='';\n\nlet videoTitle='';\nlet videoSubject='';\nlet videoScript='';\nlet scriptMode='';\n\nlet visualStyle='auto';\nlet visualStyleLabel='تلقائي';\n\nlet targetDurationSeconds=0;\nlet targetDurationLabel='تلقائي';\n\nlet taskId='';\n\nlet materialFileId='';\nlet materialExtension='';\nlet materialMimeType='';\n\nlet supplementalMaterials=[];\nlet flowMaterials=[];\n\nlet contentVisualNotes='';\nlet contentSources='';\nlet contentSourcesCount=0;\n\n\n// ========================================================\n// MATERIALS\n// ========================================================\n\nif (\n  command === '/clean_cache' ||\n  text === '🧹 تنظيف الكاش'\n) {\n\n  route='cache_cleanup';\n  reply='';\n\n} else if (command === '/drive_materials') {\n\n  route='drive_import';\n  reply='☁️ جاري فحص Google Drive...';\n\n} else if (command === '/flow') {\n\n  user.awaiting='flow_scene_id';\n  user.pending_flow_scene_id=null;\n\n  reply=\n`🎨 Google Flow Materials\n\nأرسل رقم المشهد الذي تريد إضافة مادة Flow له.\n\nمثال:\n3`;\n\n} else if (\n  !command &&\n  user.awaiting === 'flow_scene_id' &&\n  text\n) {\n\n  const sceneId=\n    Number(\n      String(text || '').trim()\n    );\n\n  if (\n    !Number.isInteger(sceneId) ||\n    sceneId < 1\n  ) {\n\n    reply=\n`❌ رقم المشهد غير صحيح.\n\nأرسل رقمًا صحيحًا أكبر من أو يساوي 1.`;\n\n  } else {\n\n    user.pending_flow_scene_id=sceneId;\n    user.awaiting='flow_material';\n\n    reply=\n`✅ المشهد رقم ${sceneId}\n\nالآن أرسل صورة أو فيديو تم إنتاجه في Google Flow.`;\n  }\n\n} else if (command === '/materials') {\n\n  user.awaiting='materials';\n  user.pending_materials=[];\n\n  reply=\n`📎 إضافة مواد\n\nأرسل الصور أو الفيديوهات التي تريد استخدامها.\n\nيمكنك إرسال عدة ملفات، واحدًا بعد الآخر.\n\nعند الانتهاء أرسل:\n/done`;\n\n} else if (\n  !command &&\n  incomingMaterial &&\n  user.awaiting === 'flow_material' &&\n  Number(user.pending_flow_scene_id || 0) >= 1\n) {\n\n  route='flow_material_upload';\n\n  materialFileId=\n    incomingMaterial.file_id;\n\n  materialExtension=\n    incomingMaterial.extension;\n\n  materialMimeType=\n    incomingMaterial.mime_type;\n\n  reply='';\n\n} else if (\n  !command &&\n  incomingMaterial\n) {\n\n  route='material_upload';\n\n  materialFileId=\n    incomingMaterial.file_id;\n\n  materialExtension=\n    incomingMaterial.extension;\n\n  materialMimeType=\n    incomingMaterial.mime_type;\n\n  reply='';\n\n} else if (\n  command === '/done' &&\n  (\n    user.awaiting === 'materials' ||\n    user.awaiting === 'flow_material' ||\n    user.awaiting === 'flow_scene_id' ||\n    user.awaiting === 'flow_material_done'\n  )\n) {\n\n  user.awaiting=null;\n  user.pending_flow_scene_id=null;\n\n  reply=\n`✅ انتهت إضافة المواد.\n\n📎 سيتم التحقق من الملفات الفعلية على السيرفر عند بدء الفيديو.\n\nالآن استخدم:\n/script\nأو\n/video\nأو\n/notebook`;\n\n} else if (\n  !command &&\n  incomingMaterial\n) {\n\n  reply=\n`📎 لإضافة صورة أو فيديو كمادة مساعدة استخدم أولًا:\n\n/materials`;\n\n\n// ========================================================\n// START\n// ========================================================\n\n} else if (command === '/start') {\n\n  user.awaiting=null;\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n  user.pending_flow_scene_id=null;\n  user.pending_flow_materials=[];\n\n  reply=\n`🎬 Pingoo Video جاهز\n\n/video إنشاء فيديو تلقائي\n/script إدخال سكربت يدوي\n/notebook بحث وإنتاج من NotebookLM\n/flow إضافة مواد مولدة من Google Flow\n/drive_materials استيراد مواد من Google Drive\n/materials إضافة صور أو فيديوهات\n/clean_cache تنظيف الكاش\n/status حالة الطلب\n/history السجل\n/settings الإعدادات\n/cancel إلغاء الطلب`;\n\n\n// ========================================================\n// /NOTEBOOK NOTEBOOKLM HANDOFF\n// ========================================================\n\n} else if (command === '/notebook') {\n\n  user.awaiting='notebook_package';\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n\n  reply=\n`📚 وضع NotebookLM\n\nجهّز المحتوى في NotebookLM ثم أرسل حزمة الإنتاج هنا.\n\nالصيغة المطلوبة:\n\nTITLE:\n...\n\nTOPIC:\n...\n\nDURATION:\n60\n\nSTYLE:\nfuturistic\n\nSCRIPT:\n...\n\nVISUAL_NOTES:\n...\n\nSOURCES:\n...`;\n\n} else if (\n  !command &&\n  user.awaiting === 'notebook_package' &&\n  text\n) {\n\n  const pkg=\n    parseNotebookPackage(text);\n\n  const required=[\n    'TITLE',\n    'TOPIC',\n    'SCRIPT'\n  ];\n\n  const missing=\n    required.find(\n      key => !String(pkg[key] || '').trim()\n    );\n\n  if (missing) {\n\n    reply=\n`❌ حزمة NotebookLM غير مكتملة.\n\nالحقل الناقص:\n${missing}\n\nأرسل الحزمة كاملة من جديد.`;\n\n  } else {\n\n    const rawDuration=\n      String(pkg.DURATION || 'auto')\n        .trim();\n\n    let parsedDuration=null;\n\n    if (\n      !rawDuration ||\n      rawDuration.toLowerCase() === 'auto' ||\n      rawDuration === 'تلقائي'\n    ) {\n      parsedDuration={\n        seconds:0,\n        label:'تلقائي'\n      };\n    } else {\n      const seconds=\n        parseCustomDuration(rawDuration);\n\n      if (seconds) {\n        parsedDuration={\n          seconds,\n          label:`${seconds} ثانية`\n        };\n      }\n    }\n\n    if (!parsedDuration) {\n\n      reply=\n`❌ مدة NotebookLM غير صحيحة.\n\nالمسموح:\n15-300 ثانية أو auto.\n\nأرسل الحزمة كاملة من جديد.`;\n\n    } else {\n\n      const selected=\n        resolveStyle(pkg.STYLE || 'auto');\n\n      if (!selected) {\n\n        reply=\n`❌ نمط NotebookLM غير صحيح.\n\nالمسموح:\nrealistic\ncartoon\nillustration\n3d\nfuturistic\nauto\n\nأرسل الحزمة كاملة من جديد.`;\n\n      } else {\n\n        videoTitle=String(pkg.TITLE || '').trim();\n        videoSubject=String(pkg.TOPIC || '').trim();\n        videoScript=String(pkg.SCRIPT || '').trim();\n\n        visualStyle=selected.key;\n        visualStyleLabel=selected.label;\n\n        targetDurationSeconds=parsedDuration.seconds;\n        targetDurationLabel=parsedDuration.label;\n\n        contentVisualNotes=\n          String(pkg.VISUAL_NOTES || '').trim();\n\n        contentSources=\n          String(pkg.SOURCES || '').trim();\n\n        contentSourcesCount=\n          notebookSourceCount(contentSources);\n\n        user.awaiting=null;\n        user.pending_title=null;\n        user.pending_topic=null;\n        user.pending_duration_seconds=null;\n        user.pending_duration_label=null;\n        user.pending_style=null;\n        user.pending_notebook_package={\n          title:videoTitle,\n          topic:videoSubject,\n          duration:targetDurationLabel,\n          style:visualStyle,\n          visual_notes:contentVisualNotes,\n          sources:contentSources\n        };\n\n        route='video';\n        scriptMode='notebook';\n\n        reply=\n`✅ تم استلام حزمة NotebookLM.\n\n🎬 العنوان:\n${videoTitle}\n\n📝 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 النمط:\n${visualStyleLabel}\n\n📚 المصادر:\n${contentSourcesCount}\n\nجاري إنشاء الفيديو...`;\n      }\n    }\n  }\n\n\n// ========================================================\n// /VIDEO AUTO\n// ========================================================\n\n} else if (command === '/video') {\n\n  videoSubject=text\n    .replace(/^\\/video(?:@\\w+)?/i,'')\n    .trim();\n\n  user.pending_title=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n\n  if (!videoSubject) {\n\n    user.awaiting='video_topic';\n    user.pending_topic=null;\n\n    reply=\n`🎬 أرسل الآن موضوع الفيديو.\n\nمثال:\nفوائد النوم وتأثيره على الدماغ`;\n\n  } else {\n\n    user.pending_topic=videoSubject;\n    user.awaiting='video_duration';\n\n    reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${videoSubject}\n\n`\n    );\n  }\n\n\n// ========================================================\n// /SCRIPT MANUAL\n// ========================================================\n\n} else if (command === '/script') {\n\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n\n  user.awaiting='manual_title';\n\n  reply=\n`✍️ وضع السكربت اليدوي\n\n1️⃣ أرسل الآن عنوان الفيديو.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_title' &&\n  text\n) {\n\n  user.pending_title=text;\n  user.awaiting='manual_topic';\n\n  reply=\n`✅ تم حفظ العنوان:\n${text}\n\n2️⃣ أرسل الآن موضوع الفيديو.`;\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_topic' &&\n  text\n) {\n\n  user.pending_topic=text;\n  user.awaiting='manual_duration';\n\n  reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${text}\n\n3️⃣ `\n  );\n\n\n// ========================================================\n// MANUAL DURATION\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_duration' &&\n  text\n) {\n\n  if (text.trim() === '6') {\n\n    user.awaiting='manual_duration_custom';\n\n    reply=\n`⏱ أرسل المدة المطلوبة بالثواني.\n\nالحد الأدنى: 15 ثانية\nالحد الأعلى: 300 ثانية\n\nمثال:\n75`;\n\n  } else {\n\n    const duration=\n      resolveDuration(text);\n\n    if (!duration) {\n\n      reply=durationMenu(\n`❌ اختيار المدة غير صحيح.\n\n`\n      );\n\n    } else {\n\n      user.pending_duration_seconds=\n        duration.seconds;\n\n      user.pending_duration_label=\n        duration.label;\n\n      user.awaiting='manual_style';\n\n      reply=styleMenu(\n`✅ مدة الفيديو:\n${duration.label}\n\n4️⃣ `\n      );\n    }\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_duration_custom' &&\n  text\n) {\n\n  const seconds=\n    parseCustomDuration(text);\n\n  if (!seconds) {\n\n    reply=\n`❌ المدة غير صحيحة.\n\nأرسل رقمًا بين 15 و300 ثانية.`;\n\n  } else {\n\n    user.pending_duration_seconds=seconds;\n    user.pending_duration_label=\n      `${seconds} ثانية`;\n\n    user.awaiting='manual_style';\n\n    reply=styleMenu(\n`✅ مدة الفيديو المستهدفة:\n${seconds} ثانية\n\n4️⃣ `\n    );\n  }\n\n\n// ========================================================\n// MANUAL STYLE\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_style' &&\n  text\n) {\n\n  const selected=\n    resolveStyle(text);\n\n  if (!selected) {\n\n    reply=styleMenu(\n`❌ الاختيار غير صحيح.\n\n`\n    );\n\n  } else {\n\n    user.pending_style=selected.key;\n    user.awaiting='manual_script';\n\n    reply=\n`✅ نمط المشاهد:\n${selected.label}\n\n5️⃣ أرسل الآن السكربت كاملًا.`;\n  }\n\n\n// ========================================================\n// MANUAL SCRIPT\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'manual_script' &&\n  text\n) {\n\n  const target=\n    Number(\n      user.pending_duration_seconds || 0\n    );\n\n  const estimated=\n    estimateScriptSeconds(text);\n\n  const tolerance=\n    target > 0\n      ? Math.max(\n          8,\n          Math.round(target * 0.25)\n        )\n      : 0;\n\n  if (\n    target > 0 &&\n    Math.abs(estimated-target) > tolerance\n  ) {\n\n    reply=\n`⚠️ السكربت لا يناسب المدة المستهدفة.\n\n⏱ المدة المستهدفة:\n${user.pending_duration_label}\n\n📝 المدة المتوقعة للسكربت:\nحوالي ${estimated} ثانية\n\nأرسل سكربت أقصر أو أطول ليقترب من المدة المطلوبة.\n\nلن نقوم بقص الكلام أو تسريع الصوت تلقائيًا.`;\n\n  } else {\n\n    videoTitle=String(\n      user.pending_title || ''\n    ).trim();\n\n    videoSubject=String(\n      user.pending_topic || ''\n    ).trim();\n\n    const selected=\n      Object.values(STYLE_OPTIONS)\n        .find(\n          s => s.key === user.pending_style\n        )\n      || STYLE_OPTIONS['6'];\n\n    visualStyle=selected.key;\n    visualStyleLabel=selected.label;\n\n    targetDurationSeconds=\n      Number(\n        user.pending_duration_seconds || 0\n      );\n\n    targetDurationLabel=\n      user.pending_duration_label\n      || 'تلقائي';\n\n    videoScript=text;\n\n    user.awaiting=null;\n    user.pending_title=null;\n    user.pending_topic=null;\n    user.pending_duration_seconds=null;\n    user.pending_duration_label=null;\n    user.pending_style=null;\n\n    route='video';\n    scriptMode='manual';\n\n    reply=\n`✅ تم استلام السكربت اليدوي.\n\n🎬 العنوان:\n${videoTitle}\n\n📝 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 نمط المشاهد:\n${visualStyleLabel}\n\nجاري إنشاء الفيديو...`;\n  }\n\n\n// ========================================================\n// AUTO VIDEO TOPIC\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_topic' &&\n  text\n) {\n\n  user.pending_topic=text;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n\n  user.awaiting='video_duration';\n\n  reply=durationMenu(\n`✅ تم حفظ الموضوع:\n${text}\n\n`\n  );\n\n\n// ========================================================\n// AUTO VIDEO DURATION\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_duration' &&\n  text\n) {\n\n  if (text.trim() === '6') {\n\n    user.awaiting='video_duration_custom';\n\n    reply=\n`⏱ أرسل المدة المطلوبة بالثواني.\n\nالحد الأدنى: 15 ثانية\nالحد الأعلى: 300 ثانية\n\nمثال:\n75`;\n\n  } else {\n\n    const duration=\n      resolveDuration(text);\n\n    if (!duration) {\n\n      reply=durationMenu(\n`❌ اختيار المدة غير صحيح.\n\n`\n      );\n\n    } else {\n\n      user.pending_duration_seconds=\n        duration.seconds;\n\n      user.pending_duration_label=\n        duration.label;\n\n      user.awaiting='video_style';\n\n      reply=styleMenu(\n`✅ مدة الفيديو:\n${duration.label}\n\n`\n      );\n    }\n  }\n\n} else if (\n  !command &&\n  user.awaiting === 'video_duration_custom' &&\n  text\n) {\n\n  const seconds=\n    parseCustomDuration(text);\n\n  if (!seconds) {\n\n    reply=\n`❌ المدة غير صحيحة.\n\nأرسل رقمًا بين 15 و300 ثانية.`;\n\n  } else {\n\n    user.pending_duration_seconds=seconds;\n    user.pending_duration_label=\n      `${seconds} ثانية`;\n\n    user.awaiting='video_style';\n\n    reply=styleMenu(\n`✅ مدة الفيديو:\n${seconds} ثانية\n\n`\n    );\n  }\n\n\n// ========================================================\n// AUTO VIDEO STYLE\n// ========================================================\n\n} else if (\n  !command &&\n  user.awaiting === 'video_style' &&\n  text\n) {\n\n  const selected=\n    resolveStyle(text);\n\n  if (!selected) {\n\n    reply=styleMenu(\n`❌ الاختيار غير صحيح.\n\n`\n    );\n\n  } else {\n\n    videoSubject=String(\n      user.pending_topic || ''\n    ).trim();\n\n    visualStyle=selected.key;\n    visualStyleLabel=selected.label;\n\n    targetDurationSeconds=\n      Number(\n        user.pending_duration_seconds || 0\n      );\n\n    targetDurationLabel=\n      user.pending_duration_label\n      || 'تلقائي';\n\n    user.awaiting=null;\n    user.pending_topic=null;\n    user.pending_duration_seconds=null;\n    user.pending_duration_label=null;\n    user.pending_style=null;\n\n    route='video';\n    scriptMode='auto';\n\n    reply=\n`⏳ تم استلام الطلب.\n\n🎬 الموضوع:\n${videoSubject}\n\n⏱ المدة:\n${targetDurationLabel}\n\n🎨 نمط المشاهد:\n${visualStyleLabel}\n\nجاري تجهيز الفيديو...`;\n  }\n\n\n// ========================================================\n// STATUS / HISTORY / SETTINGS / CANCEL\n// ========================================================\n\n} else if (command === '/status') {\n\n  const job=store.jobs.find(\n    j => String(j.telegram_id) === telegramId\n  );\n\n  if (!job) {\n\n    reply='📊 لا توجد لديك مهمة محفوظة حتى الآن.';\n\n  } else {\n\n    route='status';\n    taskId=job.task_id;\n  }\n\n} else if (command === '/history') {\n\n  const jobs=store.jobs\n    .filter(\n      j => String(j.telegram_id) === telegramId\n    )\n    .slice(0,5);\n\n  if (!jobs.length) {\n\n    reply='📚 السجل فارغ.';\n\n  } else {\n\n    reply=\n      '📚 آخر المهام\\n\\n' +\n      jobs.map(\n        (j,i) =>\n`${i+1}. ${j.title || j.topic}\n${j.task_id}\n${j.status}`\n      ).join('\\n\\n');\n  }\n\n} else if (command === '/settings') {\n\n  reply=\n`⚙️ الإعدادات الحالية\n\nاللغة: ${user.language}\nالصوت: ${user.voice}\nالمقاس: ${user.video_aspect}\n\n⏱ مدة الفيديو:\nيتم اختيارها لكل فيديو\n\n🎨 نمط المشاهد:\nيتم اختياره لكل فيديو\n\nNotebookLM import: enabled\nGoogle Flow materials: enabled\nGoogle Drive Inbox: enabled`;\n\n} else if (command === '/cancel') {\n\n  user.awaiting=null;\n\n  user.pending_title=null;\n  user.pending_topic=null;\n  user.pending_duration_seconds=null;\n  user.pending_duration_label=null;\n  user.pending_style=null;\n  user.pending_notebook_package=null;\n  user.pending_flow_scene_id=null;\n  user.pending_flow_materials=[];\n  user.pending_materials=[];\n\n  reply='❌ تم إلغاء أي طلب إدخال غير مكتمل.';\n\n} else {\n\n  reply=\n`الأمر غير معروف.\n\nاستخدم /start لعرض الأوامر.`;\n}\n\n\n// ========================================================\n// MATERIALS FOR VIDEO TASK\n// ========================================================\n\nif (route === 'video') {\n\n  supplementalMaterials=\n    Array.isArray(user.pending_materials)\n      ? [...user.pending_materials]\n      : [];\n\n  flowMaterials=\n    Array.isArray(user.pending_flow_materials)\n      ? [...user.pending_flow_materials]\n      : [];\n}\n\n\n// ========================================================\n// OUTPUT\n// ========================================================\n\nreturn [{\n  json:{\n    chat_id:chatId,\n    telegram_id:telegramId,\n    username:user.username,\n\n    command,\n    route,\n    task_id:taskId,\n\n    video_title:videoTitle,\n    video_subject:videoSubject,\n    video_script:videoScript,\n\n    script_mode:scriptMode,\n\n    visual_style:visualStyle,\n    visual_style_label:visualStyleLabel,\n\n    target_duration_seconds:\n      targetDurationSeconds,\n\n    target_duration_label:\n      targetDurationLabel,\n\n    content_visual_notes:\n      contentVisualNotes,\n\n    content_sources:\n      contentSources,\n\n    content_sources_count:\n      contentSourcesCount,\n\n    video_language:user.language,\n    voice_name:user.voice,\n    video_aspect:user.video_aspect,\n\n    material_file_id:materialFileId,\n    material_extension:materialExtension,\n    material_mime_type:materialMimeType,\n\n    pending_flow_scene_id:\n      Number(user.pending_flow_scene_id || 0),\n\n    supplemental_materials:\n      supplementalMaterials,\n\n    supplemental_materials_count:\n      supplementalMaterials.length,\n\n    flow_materials:\n      flowMaterials,\n\n    flow_materials_count:\n      flowMaterials.length,\n\n    reply\n  }\n}];\n"
       },
       "id": "1e9908eb-6ef9-42ac-9ea7-fb9ec1a1bf34",
       "name": "Command Router",
@@ -689,6 +689,280 @@
         1280,
         300
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nif ($json.route !== 'drive_import') {\n  return [];\n}\n\nreturn [{\n  json:{\n    ...$json,\n    drive_root_folder_id:'1EBNUEgqLw5u8kEtNPgivGnIisrW1RHl3',\n    drive_inbox_folder_id:'1nQn25tbmJYdL5Owf37TH7NEjHo6sUbQR',\n    drive_processing_folder_id:'1UaQI5GqJJLUKeutj25FMK-H5CalEL1GW',\n    drive_used_folder_id:'1ubgCbkWSdKLjetm7izV72EWL0foK41eq'\n  }\n}];\n"
+      },
+      "id": "42b9513c-628a-4d17-aaf2-dbd2ad513ee3",
+      "name": "Drive Import Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "query",
+        "queryString": "'1nQn25tbmJYdL5Owf37TH7NEjHo6sUbQR' in parents and trashed = false",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "mode": "list",
+            "value": "root",
+            "cachedResultName": "/ (Root folder)"
+          },
+          "whatToSearch": "files",
+          "includeTrashed": false
+        },
+        "options": {
+          "fields": [
+            "id",
+            "name",
+            "mimeType",
+            "size"
+          ]
+        }
+      },
+      "id": "567aa881-4635-4dfc-bd27-ccd7dbf14297",
+      "name": "Google Drive List Inbox",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        784,
+        980
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "k9aCig2VPwI8ZyCs",
+          "name": "Pingoo Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contexts=$items('Drive Import Gate');\nconst ctx=contexts.length ? contexts[0].json : {};\nconst input=$input.all();\nconst supported=new Set(['jpg','jpeg','png','mp4','mov']);\nconst out=[];\nconst seen=new Set();\n\nfor (const item of input) {\n  const file=item.json || {};\n  const name=String(file.name || '');\n  const id=String(file.id || '');\n  const ext=name.includes('.')\n    ? name.split('.').pop().toLowerCase()\n    : '';\n  const match=name.match(/^scene-(\\d{3})__.+\\.(jpg|jpeg|png|mp4|mov)$/i);\n\n  if (!id || !match || !supported.has(ext)) {\n    continue;\n  }\n\n  const sceneId=Number(match[1]);\n  if (!Number.isInteger(sceneId) || sceneId < 1 || sceneId > 999) {\n    continue;\n  }\n\n  if (seen.has(id)) {\n    continue;\n  }\n  seen.add(id);\n\n  out.push({\n    json:{\n      ...ctx,\n      drive_file_id:id,\n      drive_file_name:name,\n      drive_file_mime_type:String(file.mimeType || ''),\n      scene_id:sceneId,\n      duplicate_prevention_key:`drive:${id}:scene:${sceneId}`\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "098a232b-1f13-41d0-bcd1-13615e324a47",
+      "name": "Parse Drive Inbox Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "move",
+        "fileId": {
+          "mode": "id",
+          "value": "={{ $json.drive_file_id }}"
+        },
+        "driveId": {
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "mode": "id",
+          "value": "1UaQI5GqJJLUKeutj25FMK-H5CalEL1GW"
+        }
+      },
+      "id": "41918434-9df3-41fe-99fa-8325ee7e1050",
+      "name": "Move Drive File To Processing",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1296,
+        980
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "k9aCig2VPwI8ZyCs",
+          "name": "Pingoo Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contexts=$items('Parse Drive Inbox Files');\nreturn items.map((item,index) => ({\n  json:{\n    ...contexts[index].json,\n    drive_processing_response:item.json\n  }\n}));\n"
+      },
+      "id": "06371c96-623d-4bff-88ba-48813664866e",
+      "name": "Attach Processing Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "mode": "id",
+          "value": "={{ $json.drive_file_id }}"
+        },
+        "options": {
+          "binaryPropertyName": "data",
+          "fileName": "={{ $json.drive_file_name }}"
+        }
+      },
+      "id": "a5bf41cb-27fa-4fa0-a3bd-59be7474be48",
+      "name": "Download Drive Material",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1808,
+        980
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "k9aCig2VPwI8ZyCs",
+          "name": "Pingoo Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contexts=$items('Attach Processing Context');\nreturn items.map((item,index) => ({\n  json:{\n    ...contexts[index].json\n  },\n  binary:item.binary\n}));\n"
+      },
+      "id": "1f90740e-7c00-4510-8755-88912369d693",
+      "name": "Attach Drive Download Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://moneyprinterturbo-api:8080/api/v1/video_materials",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a115f74c-3846-4696-bcda-e6bcca6d1b1c",
+      "name": "Upload Drive Material To API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contexts=$items('Attach Drive Download Context');\nconst store=$getWorkflowStaticData('global');\n\nif (!store.users) {\n  store.users={};\n}\n\nreturn items.map((item,index) => {\n  const ctx=contexts[index].json;\n  const filename=item.json?.data?.file;\n\n  if (!filename) {\n    throw new Error(\n      'DRIVE_MATERIAL_UPLOAD_FILE_NOT_RETURNED: ' +\n      JSON.stringify(item.json)\n    );\n  }\n\n  const userKey=String(ctx.telegram_id);\n  if (!store.users[userKey]) {\n    throw new Error('DRIVE_MATERIAL_USER_NOT_FOUND');\n  }\n\n  const user=store.users[userKey];\n  if (!Array.isArray(user.pending_flow_materials)) {\n    user.pending_flow_materials=[];\n  }\n\n  const sceneId=Number(ctx.scene_id || 0);\n  const duplicate=user.pending_flow_materials.some(existing =>\n    String(existing.source_drive_file_id || '') === String(ctx.drive_file_id) ||\n    (\n      String(existing.url || '') === String(filename) &&\n      Number(existing.scene_id || 0) === sceneId\n    )\n  );\n\n  if (!duplicate) {\n    user.pending_flow_materials.push({\n      provider:'local',\n      source:'flow',\n      scene_id:sceneId,\n      url:filename,\n      duration:0,\n      source_drive_file_id:String(ctx.drive_file_id),\n      source_drive_name:String(ctx.drive_file_name || '')\n    });\n  }\n\n  user.awaiting='flow_material_done';\n\n  return {\n    json:{\n      ...ctx,\n      uploaded_material:filename,\n      was_duplicate:duplicate,\n      flow_materials_count:user.pending_flow_materials.length\n    }\n  };\n});\n"
+      },
+      "id": "1e6e7c9a-14b9-4e60-b77d-54c3ad5b4ca5",
+      "name": "Save Drive Flow Material",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "move",
+        "fileId": {
+          "mode": "id",
+          "value": "={{ $json.drive_file_id }}"
+        },
+        "driveId": {
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "mode": "id",
+          "value": "1ubgCbkWSdKLjetm7izV72EWL0foK41eq"
+        }
+      },
+      "id": "87825173-1a18-4db8-9035-89466c089af1",
+      "name": "Move Drive File To Used",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2832,
+        980
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "k9aCig2VPwI8ZyCs",
+          "name": "Pingoo Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contexts=$items('Save Drive Flow Material');\nreturn items.map((item,index) => ({\n  json:{\n    ...contexts[index].json,\n    drive_used_response:item.json\n  }\n}));\n"
+      },
+      "id": "672fbe34-1db7-493e-b2b5-626693865750",
+      "name": "Attach Used Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst input=$input.all();\n\nif (!input.length) {\n  return [];\n}\n\nconst first=input[0].json;\nconst imported=input.filter(item => !item.json.was_duplicate);\nconst duplicates=input.filter(item => item.json.was_duplicate);\nconst lines=input.map(item =>\n  `scene-${String(item.json.scene_id).padStart(3,'0')}  ${item.json.drive_file_name}`\n);\n\nreturn [{\n  json:{\n    chat_id:first.chat_id,\n    telegram_id:first.telegram_id,\n    reply:\n`☁️ تم فحص Google Drive.\n\nDRIVE_LIST: ${input.length}\nFLOW_MATERIAL_CREATED: ${imported.length}\nDUPLICATE_PREVENTION: ${duplicates.length}\n\n${lines.join('\\n')}`\n  }\n}];\n"
+      },
+      "id": "16f5e519-fde7-42d9-af04-e9d025b68bad",
+      "name": "Format Drive Import Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3344,
+        980
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {}
+      },
+      "id": "5e2f9b86-bb98-4e6d-86c1-c7f890ed3b5a",
+      "name": "Telegram Drive Import Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        980
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "WCESKUGL4NBFdR0W",
+          "name": "Pingoo Video Telegram"
+        }
+      }
     }
   ],
   "connections": {
@@ -728,6 +1002,11 @@
           },
           {
             "node": "Cache Cleanup Gate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Drive Import Gate",
             "type": "main",
             "index": 0
           }
@@ -1070,6 +1349,143 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Drive Import Gate": {
+      "main": [
+        [
+          {
+            "node": "Google Drive List Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive List Inbox": {
+      "main": [
+        [
+          {
+            "node": "Parse Drive Inbox Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Drive Inbox Files": {
+      "main": [
+        [
+          {
+            "node": "Move Drive File To Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Drive File To Processing": {
+      "main": [
+        [
+          {
+            "node": "Attach Processing Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Processing Context": {
+      "main": [
+        [
+          {
+            "node": "Download Drive Material",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Drive Material": {
+      "main": [
+        [
+          {
+            "node": "Attach Drive Download Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Drive Download Context": {
+      "main": [
+        [
+          {
+            "node": "Upload Drive Material To API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Drive Material To API": {
+      "main": [
+        [
+          {
+            "node": "Save Drive Flow Material",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Drive Flow Material": {
+      "main": [
+        [
+          {
+            "node": "Move Drive File To Used",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Drive File To Used": {
+      "main": [
+        [
+          {
+            "node": "Attach Used Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Used Context": {
+      "main": [
+        [
+          {
+            "node": "Format Drive Import Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Drive Import Result": {
+      "main": [
+        [
+          {
+            "node": "Telegram Drive Import Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Drive Import Result": {
+      "main": [
+        []
       ]
     }
   },
