@@ -61,6 +61,16 @@ class MaterialInfo:
     source_info: Optional[dict[str, Any]] = None
 
 
+class SceneManifestItem(BaseModel):
+    scene_id: int
+    narration: str = ""
+    visual_prompt: str = ""
+    visual_query: str = ""
+    duration_seconds: float = 0.0
+    preferred_source: str = "auto"
+    material_status: str = "pending"
+
+
 class VideoParams(BaseModel):
     """
     {
@@ -95,6 +105,7 @@ class VideoParams(BaseModel):
     # Optional photos/videos uploaded by the user.
     # These supplement the online provider instead of replacing it.
     supplemental_materials: Optional[List[MaterialInfo]] = None
+    scene_manifest: Optional[List[SceneManifestItem]] = None
     
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles
     video_language: Optional[str] = ""  # auto detect

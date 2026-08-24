@@ -563,6 +563,165 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     return subtitle_path
 
 
+def _scene_manifest_items(params) -> list[dict]:
+    scenes = getattr(params, "scene_manifest", None) or []
+    if not isinstance(scenes, list):
+        return []
+
+    normalized_scenes = []
+    for index, scene in enumerate(scenes, start=1):
+        if isinstance(scene, dict):
+            raw_scene_id = scene.get("scene_id", index)
+            visual_query = scene.get("visual_query", "")
+            narration = scene.get("narration", "")
+        else:
+            raw_scene_id = getattr(scene, "scene_id", index)
+            visual_query = getattr(scene, "visual_query", "")
+            narration = getattr(scene, "narration", "")
+
+        try:
+            scene_id = int(raw_scene_id)
+        except (TypeError, ValueError):
+            scene_id = index
+
+        normalized_scenes.append(
+            {
+                "scene_id": scene_id,
+                "visual_query": str(visual_query or "").strip(),
+                "narration": str(narration or "").strip(),
+            }
+        )
+
+    return normalized_scenes
+
+
+def _persist_scene_material_assignments(task_id: str, assignments: list[dict]) -> None:
+    try:
+        task_artifacts.patch_script_data(
+            task_id,
+            scene_material_assignments=assignments,
+        )
+    except Exception as exc:
+        logger.warning(
+            "failed to persist scene material assignments: "
+            f"task_id={task_id}, error={type(exc).__name__}, detail={exc}"
+        )
+
+
+def _route_scene_materials(
+    task_id,
+    params,
+    supplemental_paths: list[str],
+    scene_manifest: list[dict],
+) -> list[str]:
+    # PINGOO_SCENE_MATERIAL_ROUTER_V1
+    # V1 keeps user materials in upload order, then downloads one provider
+    # material per remaining scene using that scene's visual_query.
+    logger.info(
+        "PINGOO_SCENE_MATERIAL_ROUTER_V1 enabled: "
+        f"scenes={len(scene_manifest)}, user_materials={len(supplemental_paths)}"
+    )
+
+    material_paths = []
+    assignments = []
+    used_user_materials = min(len(supplemental_paths), len(scene_manifest))
+
+    for index, scene in enumerate(scene_manifest):
+        scene_id = scene["scene_id"]
+        query = scene["visual_query"]
+
+        if index < used_user_materials:
+            material_path = supplemental_paths[index]
+            material_paths.append(material_path)
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": "user",
+                    "material": material_path,
+                    "query": query,
+                    "status": "assigned",
+                }
+            )
+            logger.info(
+                "PINGOO_SCENE_ROUTER: "
+                f"scene={scene_id} source=user"
+            )
+            continue
+
+        if not query:
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": "pexels",
+                    "material": "",
+                    "query": query,
+                    "status": "missing_query",
+                    "fallback_used": True,
+                }
+            )
+            logger.warning(
+                "PINGOO_SCENE_ROUTER: "
+                f"scene={scene_id} source=pexels query=\"\" fallback_used=true"
+            )
+            continue
+
+        logger.info(
+            "PINGOO_SCENE_ROUTER: "
+            f"scene={scene_id} source=pexels query={query!r}"
+        )
+        scene_paths = material.download_videos(
+            task_id=task_id,
+            search_terms=[query],
+            source=params.video_source,
+            video_aspect=params.video_aspect,
+            video_concat_mode=VideoConcatMode.sequential,
+            audio_duration=0.0,
+            max_clip_duration=params.video_clip_duration,
+            match_script_order=True,
+        )
+
+        if scene_paths:
+            material_path = scene_paths[0]
+            material_paths.append(material_path)
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": params.video_source,
+                    "material": material_path,
+                    "query": query,
+                    "status": "assigned",
+                }
+            )
+            logger.info(
+                "PINGOO_SCENE_ROUTER: "
+                f"scene={scene_id} source={params.video_source} assigned=true"
+            )
+            continue
+
+        assignments.append(
+            {
+                "scene_id": scene_id,
+                "source": params.video_source,
+                "material": "",
+                "query": query,
+                "status": "fallback",
+                "fallback_used": True,
+            }
+        )
+        logger.warning(
+            "PINGOO_SCENE_ROUTER: "
+            f"scene={scene_id} source={params.video_source} "
+            f"query={query!r} fallback_used=true"
+        )
+
+    _persist_scene_material_assignments(task_id, assignments)
+    logger.info(
+        "PINGOO_SCENE_ROUTER assignments: "
+        f"{utils.to_json(assignments)}"
+    )
+    return material_paths
+
+
 def get_video_materials(task_id, params, video_terms, audio_duration):
     # PINGOO_SUPPLEMENTAL_MATERIALS_V1
     # User-uploaded photos/videos strengthen the normal provider results.
@@ -594,6 +753,24 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             f"supplemental user materials ready: "
             f"{len(supplemental_paths)}"
         )
+
+    scene_manifest = _scene_manifest_items(params)
+    if scene_manifest and params.video_source != "local":
+        downloaded_videos = _route_scene_materials(
+            task_id=task_id,
+            params=params,
+            supplemental_paths=supplemental_paths,
+            scene_manifest=scene_manifest,
+        )
+        if not downloaded_videos:
+            _mark_task_failed(
+                task_id,
+                "materials",
+                f"failed to route scene materials from {params.video_source}",
+            )
+            return None
+        return downloaded_videos
+
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
