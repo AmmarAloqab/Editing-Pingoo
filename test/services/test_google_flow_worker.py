@@ -10,6 +10,7 @@ from tools.google_flow_worker.planner import (
     select_auto_flow_candidates,
 )
 from tools.google_flow_worker.worker import FlowGenerateRequest, flow_generate
+from tools.google_flow_worker.config import get_config
 
 
 def _scene(scene_id, preferred_source="auto"):
@@ -114,6 +115,17 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
             self.assertEqual(result["material_url"], "flow.mp4")
             upload.assert_called_once()
             self.assertFalse(path.exists())
+
+
+class GoogleFlowWorkerWindowsTest(unittest.TestCase):
+    @patch.dict("os.environ", {"LOCALAPPDATA": r"C:\Users\me\AppData\Local"}, clear=False)
+    @patch("platform.system", return_value="Windows")
+    def test_windows_defaults_use_dedicated_profile(self, _system):
+        config = get_config()
+
+        self.assertIn("PingooGoogleFlow", str(config.base_dir))
+        self.assertEqual(config.profile_dir.name, "profile")
+        self.assertEqual(config.host, "127.0.0.1")
 
 
 if __name__ == "__main__":
