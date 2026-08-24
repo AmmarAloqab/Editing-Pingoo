@@ -120,6 +120,98 @@ class SceneMaterialRouterTest(unittest.TestCase):
         self.assertEqual(calls[0]["search_terms"], ["legacy query"])
         self.assertEqual(calls[0]["audio_duration"], 20)
 
+    def test_flow_materials_bind_to_explicit_scenes_first(self):
+        calls = []
+        assignments = {}
+
+        def fake_preprocess_video(materials, clip_duration):
+            return materials
+
+        def fake_download_videos(**kwargs):
+            calls.append(kwargs)
+            query = kwargs["search_terms"][0]
+            return [f"/tmp/{query}.mp4"]
+
+        def fake_patch_script_data(task_id, **updates):
+            assignments.update(updates)
+            return True
+
+        params = VideoParams(
+            video_subject="bitcoin",
+            video_terms=[],
+            video_source="pexels",
+            video_clip_duration=4,
+            match_materials_to_script=True,
+            supplemental_materials=[
+                MaterialInfo(provider="local", url="user-1.mp4"),
+            ],
+            flow_materials=[
+                MaterialInfo(
+                    provider="local",
+                    source="flow",
+                    scene_id=3,
+                    url="flow-3.mp4",
+                ),
+                MaterialInfo(
+                    provider="local",
+                    source="flow",
+                    scene_id=5,
+                    url="flow-5.mp4",
+                ),
+            ],
+            scene_manifest=[
+                _scene(1, "Bitcoin digital currency"),
+                _scene(2, "Bitcoin transaction"),
+                _scene(3, "blockchain network"),
+                _scene(4, "Bitcoin mining"),
+                _scene(5, "hardware wallet"),
+            ],
+        )
+
+        with (
+            patch.object(task.video, "preprocess_video", fake_preprocess_video),
+            patch.object(task.material, "download_videos", fake_download_videos),
+            patch.object(task.task_artifacts, "patch_script_data", fake_patch_script_data),
+        ):
+            result = task.get_video_materials(
+                "flow-router-test",
+                params,
+                params.video_terms,
+                20,
+            )
+
+        self.assertEqual(
+            result,
+            [
+                "user-1.mp4",
+                "/tmp/Bitcoin transaction.mp4",
+                "flow-3.mp4",
+                "/tmp/Bitcoin mining.mp4",
+                "flow-5.mp4",
+            ],
+        )
+        self.assertEqual(
+            [call["search_terms"] for call in calls],
+            [
+                ["Bitcoin transaction"],
+                ["Bitcoin mining"],
+            ],
+        )
+        self.assertEqual(
+            [
+                item["source"]
+                for item in assignments["scene_material_assignments"]
+            ],
+            ["user", "pexels", "flow", "pexels", "flow"],
+        )
+        self.assertEqual(
+            [
+                item["scene_id"]
+                for item in assignments["scene_material_assignments"]
+            ],
+            [1, 2, 3, 4, 5],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

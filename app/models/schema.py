@@ -55,6 +55,8 @@ class MaterialInfo:
     provider: str = "pexels"
     url: str = ""
     duration: int = 0
+    source: Optional[str] = None
+    scene_id: Optional[int] = None
     # 在线素材搜索会附带经过筛选的公开来源信息，供搜索缓存和任务记录复用。
     # 本地上传素材不需要填写；写入任务文件前仍会按字段白名单重新构造，
     # 避免外部请求传入的签名 URL、凭据或无关字段进入持久化数据。
@@ -105,6 +107,7 @@ class VideoParams(BaseModel):
     # Optional photos/videos uploaded by the user.
     # These supplement the online provider instead of replacing it.
     supplemental_materials: Optional[List[MaterialInfo]] = None
+    flow_materials: Optional[List[MaterialInfo]] = None
     scene_manifest: Optional[List[SceneManifestItem]] = None
     
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles

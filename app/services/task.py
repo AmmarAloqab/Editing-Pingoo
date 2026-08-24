@@ -608,30 +608,110 @@ def _persist_scene_material_assignments(task_id: str, assignments: list[dict]) -
         )
 
 
+def _flow_material_scene_id(material_info) -> int | None:
+    try:
+        scene_id = int(getattr(material_info, "scene_id", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return scene_id if scene_id >= 1 else None
+
+
+def _prepare_flow_materials_by_scene(
+    task_id: str,
+    params,
+) -> dict[int, str]:
+    # PINGOO_FLOW_SCENE_ROUTING_V1
+    flow_materials = getattr(params, "flow_materials", None) or []
+    if not flow_materials:
+        return {}
+
+    logger.info(
+        f"\n\n## preprocess Google Flow scene materials: {len(flow_materials)}"
+    )
+
+    prepared_flow = video.preprocess_video(
+        materials=flow_materials,
+        clip_duration=params.video_clip_duration,
+    )
+
+    flow_by_scene: dict[int, str] = {}
+    for material_info in prepared_flow:
+        scene_id = _flow_material_scene_id(material_info)
+        material_path = getattr(material_info, "url", "") or ""
+        if not scene_id or not material_path:
+            logger.warning(
+                "PINGOO_FLOW_SCENE_ROUTING_V1: skip invalid Flow material, "
+                f"scene_id={scene_id}, material={material_path}"
+            )
+            continue
+        if scene_id in flow_by_scene:
+            logger.info(
+                "PINGOO_FLOW_SCENE_ROUTING_V1: extra Flow material kept as metadata, "
+                f"scene={scene_id}, material={material_path}"
+            )
+            continue
+        flow_by_scene[scene_id] = material_path
+
+    logger.info(
+        "PINGOO_FLOW_SCENE_ROUTING_V1 prepared: "
+        f"scenes={sorted(flow_by_scene)}"
+    )
+    return flow_by_scene
+
+
 def _route_scene_materials(
     task_id,
     params,
     supplemental_paths: list[str],
     scene_manifest: list[dict],
+    flow_paths_by_scene: dict[int, str] | None = None,
 ) -> list[str]:
     # PINGOO_SCENE_MATERIAL_ROUTER_V1
     # V1 keeps user materials in upload order, then downloads one provider
     # material per remaining scene using that scene's visual_query.
+    flow_paths_by_scene = flow_paths_by_scene or {}
     logger.info(
         "PINGOO_SCENE_MATERIAL_ROUTER_V1 enabled: "
-        f"scenes={len(scene_manifest)}, user_materials={len(supplemental_paths)}"
+        f"scenes={len(scene_manifest)}, user_materials={len(supplemental_paths)}, "
+        f"flow_materials={len(flow_paths_by_scene)}"
     )
 
     material_paths = []
     assignments = []
-    used_user_materials = min(len(supplemental_paths), len(scene_manifest))
+    used_user_materials = 0
+    scene_ids = {scene["scene_id"] for scene in scene_manifest}
+    for scene_id in sorted(flow_paths_by_scene):
+        if scene_id not in scene_ids:
+            logger.warning(
+                "PINGOO_FLOW_SCENE_ROUTING_V1: Flow material ignored because "
+                f"scene_id={scene_id} is not in scene_manifest"
+            )
 
     for index, scene in enumerate(scene_manifest):
         scene_id = scene["scene_id"]
         query = scene["visual_query"]
 
-        if index < used_user_materials:
-            material_path = supplemental_paths[index]
+        if scene_id in flow_paths_by_scene:
+            material_path = flow_paths_by_scene[scene_id]
+            material_paths.append(material_path)
+            assignments.append(
+                {
+                    "scene_id": scene_id,
+                    "source": "flow",
+                    "material": material_path,
+                    "query": query,
+                    "status": "assigned",
+                }
+            )
+            logger.info(
+                "PINGOO_SCENE_ROUTER: "
+                f"scene={scene_id} source=flow"
+            )
+            continue
+
+        if used_user_materials < len(supplemental_paths):
+            material_path = supplemental_paths[used_user_materials]
+            used_user_materials += 1
             material_paths.append(material_path)
             assignments.append(
                 {
@@ -731,6 +811,10 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
         getattr(params, "supplemental_materials", None)
         or []
     )
+    flow_paths_by_scene = _prepare_flow_materials_by_scene(
+        task_id,
+        params,
+    )
 
     if supplemental_materials:
         logger.info(
@@ -761,6 +845,7 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             params=params,
             supplemental_paths=supplemental_paths,
             scene_manifest=scene_manifest,
+            flow_paths_by_scene=flow_paths_by_scene,
         )
         if not downloaded_videos:
             _mark_task_failed(
