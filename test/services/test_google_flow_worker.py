@@ -6,13 +6,27 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.google_flow_worker.config import FlowWorkerConfig
-from tools.google_flow_worker.errors import FlowAuthRequired, FlowGenerateButtonChanged, FlowProjectCreateChanged, FlowPromptInputChanged, PingooUploadFailed
+from tools.google_flow_worker.errors import (
+    FlowAuthRequired,
+    FlowGenerateActionChanged,
+    FlowProjectNavigationChanged,
+    FlowPromptInputChanged,
+    FlowWorkspaceLoadChanged,
+    PingooUploadFailed,
+)
 from tools.google_flow_worker.flow_browser import GoogleFlowBrowser
 from tools.google_flow_worker.planner import (
     build_flow_prompt,
     select_auto_flow_candidates,
 )
-from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate, flow_job_status, flow_ui_inventory
+from tools.google_flow_worker.worker import (
+    FlowGenerateRequest,
+    flow_diagnostics,
+    flow_generate,
+    flow_job_status,
+    flow_ui_inventory,
+    flow_workspace_probe,
+)
 from tools.google_flow_worker.config import get_config
 
 
@@ -223,6 +237,9 @@ class FakeItem:
     def fill(self, value, timeout=None):
         self.filled = value
 
+    def press(self, _key):
+        pass
+
 
 class FakeLocator:
     def __init__(self, items=None):
@@ -309,6 +326,67 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
 
         self.assertIs(browser._first_prompt_input(page), prompt)
 
+    def test_existing_project_navigation_is_preferred(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        edit = FakeItem(text="تعديل المشروع")
+        new = FakeItem(text="مشروع جديد")
+        prompt = FakeItem(text="اكتب وصف الفيديو", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [edit, new]
+
+        def edit_and_reveal(timeout=None):
+            edit.clicked = True
+            prompt.visible = True
+
+        edit.click = edit_and_reveal
+
+        navigation = browser._ensure_prompt_workspace(page)
+
+        self.assertEqual(navigation, "existing")
+        self.assertTrue(edit.clicked)
+        self.assertFalse(new.clicked)
+
+    def test_new_project_navigation_fallback(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        new = FakeItem(text="New project")
+        prompt = FakeItem(text="Describe your video", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [new]
+
+        def new_and_reveal(timeout=None):
+            new.clicked = True
+            prompt.visible = True
+
+        new.click = new_and_reveal
+
+        navigation = browser._ensure_prompt_workspace(page)
+
+        self.assertEqual(navigation, "new")
+        self.assertTrue(new.clicked)
+
+    def test_iframe_prompt_input_detection(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        main = FakeFlowPage()
+        frame = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        main.frames = [frame]
+
+        prompt, frame_label = browser._first_prompt_input_with_frame(main)
+
+        self.assertIs(prompt, frame.inputs[0])
+        self.assertEqual(frame_label, "frame_1")
+
+    def test_generate_action_probe_does_not_click(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        generate = FakeItem(text="Generate")
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [generate]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIs(action, generate)
+        self.assertEqual(frame_label, "main")
+        self.assertFalse(generate.clicked)
+
     def test_project_navigation_clicks_landing_cta_before_prompt(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
         cta = FakeItem(text="ابدأ الآن")
@@ -325,28 +403,38 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
             prompt.visible = True
         cta.click = click_and_reveal
 
-        browser._ensure_prompt_workspace(page)
+        navigation = browser._ensure_prompt_workspace(page)
 
         self.assertTrue(cta.clicked)
+        self.assertEqual(navigation, "existing")
         self.assertIs(browser._first_prompt_input(page), prompt)
 
     def test_precise_prompt_input_error_code(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
         page = FakeFlowPage(buttons=[])
 
-        with self.assertRaises(FlowProjectCreateChanged) as raised:
+        with self.assertRaises(FlowProjectNavigationChanged) as raised:
             browser._ensure_prompt_workspace(page)
 
-        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_PROJECT_CREATE")
+        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_PROJECT_NAVIGATION")
+
+    def test_workspace_load_error_code_after_navigation_without_prompt(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        page = FakeFlowPage(buttons=["مشروع جديد"])
+
+        with self.assertRaises(FlowWorkspaceLoadChanged) as raised:
+            browser._ensure_prompt_workspace(page)
+
+        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_WORKSPACE_LOAD")
 
     def test_precise_generate_button_error_code(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
         page = FakeFlowPage(inputs=[FakeItem(text="prompt")])
 
-        with self.assertRaises(FlowGenerateButtonChanged) as raised:
+        with self.assertRaises(FlowGenerateActionChanged) as raised:
             browser._submit_prompt(page, "hello", "9:16", "video")
 
-        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_GENERATE_BUTTON")
+        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_GENERATE_ACTION")
 
     def test_ui_inventory_endpoint_returns_safe_structure(self):
         expected = {
@@ -366,6 +454,36 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
             result = flow_ui_inventory()
 
         self.assertEqual(result, expected)
+
+    def test_workspace_probe_endpoint_returns_safe_structure(self):
+        expected = {
+            "workspace_ready": True,
+            "workspace_url": "https://labs.google/fx/ar/tools/flow/project/123",
+            "workspace_title": "Google Flow",
+            "project_navigation": "existing",
+            "prompt_input_found": True,
+            "prompt_frame": "frame_1",
+            "generate_action_found": True,
+            "error_code": None,
+        }
+        with patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls:
+            browser_cls.return_value.workspace_probe.return_value = expected
+
+            result = flow_workspace_probe()
+
+        self.assertEqual(result, expected)
+
+    def test_workspace_probe_reuses_production_navigation_without_generation(self):
+        import inspect
+
+        source = inspect.getsource(GoogleFlowBrowser.workspace_probe)
+
+        self.assertIn("_ensure_prompt_workspace", source)
+        self.assertIn("_first_prompt_input_with_frame", source)
+        self.assertIn("_find_generate_action", source)
+        self.assertNotIn("_submit_prompt", source)
+        self.assertNotIn("fill(", source)
+        self.assertNotIn("FLOW_PROMPT_SUBMITTED", source)
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
     @patch.dict("os.environ", {"LOCALAPPDATA": r"C:\Users\me\AppData\Local"}, clear=True)

@@ -153,6 +153,11 @@ def flow_ui_inventory():
     return GoogleFlowBrowser(config).ui_inventory()
 
 
+@app.get("/flow/workspace_probe")
+def flow_workspace_probe():
+    return GoogleFlowBrowser(config).workspace_probe()
+
+
 @app.post("/flow/generate")
 def flow_generate(request: FlowGenerateRequest):
     job_id = uuid4().hex

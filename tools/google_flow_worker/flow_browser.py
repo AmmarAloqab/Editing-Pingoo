@@ -12,12 +12,15 @@ from .config import FlowWorkerConfig, ensure_runtime_dirs
 from .errors import (
     FlowAuthRequired,
     FlowDownloadFailed,
+    FlowGenerateActionChanged,
     FlowGenerateButtonChanged,
     FlowGenerationFailed,
     FlowGenerationTimeout,
     FlowProjectCreateChanged,
+    FlowProjectNavigationChanged,
     FlowPromptInputChanged,
     FlowUiChanged,
+    FlowWorkspaceLoadChanged,
 )
 from .windows_chrome import find_chrome_executable
 
@@ -204,6 +207,75 @@ class GoogleFlowBrowser:
                 except Exception:
                     pass
 
+    def workspace_probe(self) -> dict:
+        context = None
+        page = None
+        navigation = "not_needed"
+        try:
+            with sync_playwright() as playwright:
+                context = playwright.chromium.launch_persistent_context(**self._context_kwargs())
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(self.config.flow_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2000)
+                if not self._is_authenticated(page):
+                    raise FlowAuthRequired("Google Flow authenticated session required")
+                navigation = self._ensure_prompt_workspace(page)
+                prompt_input, prompt_frame = self._first_prompt_input_with_frame(page)
+                generate_action, _generate_frame = self._find_generate_action(page)
+                if prompt_input is None:
+                    raise FlowPromptInputChanged("Could not find Flow prompt input")
+                if generate_action is None:
+                    raise FlowGenerateActionChanged("Could not find Flow generate action")
+                return {
+                    "workspace_ready": True,
+                    "workspace_url": self._safe_url(page),
+                    "workspace_title": self._safe_title(page),
+                    "project_navigation": navigation,
+                    "prompt_input_found": True,
+                    "prompt_frame": prompt_frame,
+                    "generate_action_found": True,
+                    "error_code": None,
+                }
+        except FlowAuthRequired as exc:
+            return {
+                "workspace_ready": False,
+                "workspace_url": self._safe_url(page),
+                "workspace_title": self._safe_title(page),
+                "project_navigation": navigation,
+                "prompt_input_found": bool(self._first_prompt_input(page)) if page else False,
+                "prompt_frame": self._prompt_frame_label(page) if page else "",
+                "generate_action_found": bool(self._find_generate_action(page)[0]) if page else False,
+                "error_code": exc.code,
+            }
+        except FlowUiChanged as exc:
+            return {
+                "workspace_ready": False,
+                "workspace_url": self._safe_url(page),
+                "workspace_title": self._safe_title(page),
+                "project_navigation": navigation,
+                "prompt_input_found": bool(self._first_prompt_input(page)) if page else False,
+                "prompt_frame": self._prompt_frame_label(page) if page else "",
+                "generate_action_found": bool(self._find_generate_action(page)[0]) if page else False,
+                "error_code": exc.code,
+            }
+        except Exception as exc:
+            return {
+                "workspace_ready": False,
+                "workspace_url": self._safe_url(page),
+                "workspace_title": self._safe_title(page),
+                "project_navigation": navigation,
+                "prompt_input_found": bool(self._first_prompt_input(page)) if page else False,
+                "prompt_frame": self._prompt_frame_label(page) if page else "",
+                "generate_action_found": bool(self._find_generate_action(page)[0]) if page else False,
+                "error_code": self._status_error_code(exc),
+            }
+        finally:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
     def _page_diagnostics(self, page) -> dict:
         inventory = self._safe_ui_inventory(page)
         buttons = inventory.get("buttons", [])
@@ -336,51 +408,90 @@ class GoogleFlowBrowser:
                 continue
         return None
 
-    def _first_prompt_input(self, page):
+    def _first_prompt_input_with_frame(self, page):
         frames = self._candidate_frames(page)
         role_names = re.compile(
-            r"prompt|describe|create|generate|اكتب|أدخل|ادخل|وصف|الفكرة|النص|المطالبة|أنشئ|انشئ|توليد",
+            r"prompt|describe|create|generate|اكتب|أدخل|ادخل|وصف|الفكرة|النص|المطالبة|موجّه|موجه|أنشئ|انشئ|توليد",
             re.I,
         )
-        for frame in frames:
+        for index, frame in enumerate(frames):
             try:
                 candidate = frame.get_by_role("textbox", name=role_names).first
                 if candidate.count() and candidate.is_visible(timeout=1000):
-                    return candidate
+                    return candidate, self._frame_label(index)
             except Exception:
                 continue
-        return self._first_visible_locator(
-            frames,
-            "textarea, [contenteditable='true'], [role='textbox']",
-        )
+        for index, frame in enumerate(frames):
+            item = self._first_visible_locator(
+                [frame],
+                "textarea, [contenteditable='true'], [role='textbox']",
+            )
+            if item is not None:
+                return item, self._frame_label(index)
+        return None, ""
 
-    def _click_named_action(self, page, pattern: re.Pattern, timeout: int = 3000) -> bool:
-        for frame in self._candidate_frames(page):
+    def _frame_label(self, index: int) -> str:
+        return "main" if index == 0 else f"frame_{index}"
+
+    def _prompt_frame_label(self, page) -> str:
+        _input, label = self._first_prompt_input_with_frame(page)
+        return label
+
+    def _first_prompt_input(self, page):
+        item, _label = self._first_prompt_input_with_frame(page)
+        return item
+
+    def _find_named_action(self, page, pattern: re.Pattern):
+        for index, frame in enumerate(self._candidate_frames(page)):
             for role in ("button", "link"):
                 try:
                     item = frame.get_by_role(role, name=pattern).first
                     if item.count() and item.is_visible(timeout=1000):
-                        item.click(timeout=timeout)
-                        page.wait_for_timeout(1500)
-                        return True
+                        return item, self._frame_label(index)
                 except Exception:
                     continue
-        return False
+        return None, ""
 
-    def _ensure_prompt_workspace(self, page) -> None:
-        if self._first_prompt_input(page) is not None:
-            return
-        landing_or_project_action = re.compile(
-            r"new project|create project|start creating|try flow|open flow|launch|start|create|generate|"
-            r"مشروع جديد|إنشاء مشروع|انشاء مشروع|ابدأ|ابدأ الآن|جرّب|جرب|افتح|إنشاء|انشاء|توليد",
+    def _click_named_action(self, page, pattern: re.Pattern, timeout: int = 3000) -> bool:
+        item, _label = self._find_named_action(page, pattern)
+        if item is None:
+            return False
+        try:
+            item.click(timeout=timeout)
+            page.wait_for_timeout(1500)
+            return True
+        except Exception:
+            return False
+
+    def _find_generate_action(self, page):
+        generate_pattern = re.compile(
+            r"^generate$|generate video|^create$|^submit$|^send$|"
+            r"توليد|إنشاء|انشاء|إرسال|ارسل|أنشئ|انشئ",
             re.I,
         )
-        for _ in range(3):
-            if not self._click_named_action(page, landing_or_project_action, timeout=5000):
-                break
-            if self._first_prompt_input(page) is not None:
-                return
-        raise FlowProjectCreateChanged("Could not open Flow prompt workspace")
+        return self._find_named_action(page, generate_pattern)
+
+    def _ensure_prompt_workspace(self, page) -> str:
+        if self._first_prompt_input(page) is not None:
+            return "not_needed"
+        existing_project = re.compile(r"edit project|open project|تعديل المشروع|افتح المشروع|فتح المشروع", re.I)
+        new_project = re.compile(r"new project|create project|مشروع جديد|إنشاء مشروع|انشاء مشروع", re.I)
+        landing_start = re.compile(
+            r"start creating|try flow|open flow|launch|start|create|generate|"
+            r"ابدأ|ابدأ الآن|جرّب|جرب|افتح|إنشاء|انشاء|توليد",
+            re.I,
+        )
+        for navigation, pattern in (("existing", existing_project), ("new", new_project), ("existing", landing_start)):
+            clicked = False
+            for _ in range(2):
+                if not self._click_named_action(page, pattern, timeout=5000):
+                    break
+                clicked = True
+                if self._first_prompt_input(page) is not None:
+                    return navigation
+            if clicked:
+                raise FlowWorkspaceLoadChanged("Flow workspace did not expose prompt input")
+        raise FlowProjectNavigationChanged("Could not find Flow project navigation action")
 
     def _visible_role_texts(self, page, role: str, limit: int = 40) -> list[str]:
         values = []
@@ -528,16 +639,15 @@ class GoogleFlowBrowser:
             except Exception:
                 pass
 
-        generate_pattern = re.compile(
-            r"^generate$|generate video|^create$|^submit$|^send$|"
-            r"توليد|إنشاء|انشاء|إرسال|ارسل|أنشئ|انشئ",
-            re.I,
-        )
-        if self._click_named_action(page, generate_pattern, timeout=5000):
-            if log_event:
-                log_event("FLOW_PROMPT_SUBMITTED")
-            return
-        raise FlowGenerateButtonChanged("Could not find Flow generate action")
+        generate_action, _label = self._find_generate_action(page)
+        if generate_action is None:
+            raise FlowGenerateActionChanged("Could not find Flow generate action")
+        try:
+            generate_action.click(timeout=5000)
+        except Exception as exc:
+            raise FlowGenerateActionChanged("Could not click Flow generate action") from exc
+        if log_event:
+            log_event("FLOW_PROMPT_SUBMITTED")
 
     def _wait_for_download(self, page, scene_id: int, timeout_ms: int, log_event=None) -> Path:
         deadline = time.monotonic() + (timeout_ms / 1000)

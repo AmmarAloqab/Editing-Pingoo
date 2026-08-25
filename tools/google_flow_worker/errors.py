@@ -10,15 +10,27 @@ class FlowUiChanged(FlowWorkerError):
     code = "FLOW_UI_CHANGED"
 
 
-class FlowProjectCreateChanged(FlowUiChanged):
+class FlowProjectNavigationChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_PROJECT_NAVIGATION"
+
+
+class FlowProjectCreateChanged(FlowProjectNavigationChanged):
     code = "FLOW_UI_CHANGED_PROJECT_CREATE"
+
+
+class FlowWorkspaceLoadChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_WORKSPACE_LOAD"
 
 
 class FlowPromptInputChanged(FlowUiChanged):
     code = "FLOW_UI_CHANGED_PROMPT_INPUT"
 
 
-class FlowGenerateButtonChanged(FlowUiChanged):
+class FlowGenerateActionChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_GENERATE_ACTION"
+
+
+class FlowGenerateButtonChanged(FlowGenerateActionChanged):
     code = "FLOW_UI_CHANGED_GENERATE_BUTTON"
 
 
