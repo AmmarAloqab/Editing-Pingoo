@@ -594,6 +594,58 @@ class SceneMaterialRouterTest(unittest.TestCase):
         self.assertEqual(assignments["scene_material_assignments"][0]["fallback_reason"], "FLOW_EMPTY_RESULT")
 
 
+
+    def test_flow_job_poll_reaches_completed(self):
+        params = VideoParams(video_subject="bitcoin", video_aspect="9:16")
+        scene = _flow_scene(1, "Bitcoin global network")
+        with (
+            patch.object(task, "_flow_worker_url", return_value="http://worker"),
+            patch.object(
+                task,
+                "_flow_worker_json_request",
+                side_effect=[
+                    {"ok": True, "job_id": "job-1", "state": "queued"},
+                    {"ok": True, "job_id": "job-1", "state": "generating"},
+                    {"ok": True, "job_id": "job-1", "state": "completed", "material_url": "flow-1.mp4"},
+                ],
+            ),
+            patch.object(task.time, "sleep"),
+        ):
+            result = task._call_flow_worker_for_scene(scene, params)
+
+        self.assertEqual(result, "flow-1.mp4")
+
+    def test_flow_job_running_state_is_not_network_error(self):
+        with (
+            patch.object(task, "_flow_worker_timeout_seconds", return_value=20),
+            patch.object(
+                task,
+                "_flow_worker_json_request",
+                side_effect=[
+                    {"ok": True, "job_id": "job-1", "state": "generating"},
+                    {"ok": True, "job_id": "job-1", "state": "completed", "material_url": "flow-1.mp4"},
+                ],
+            ),
+            patch.object(task.time, "sleep"),
+        ):
+            result = task._poll_flow_worker_job("http://worker", "job-1", 1)
+
+        self.assertEqual(result, "flow-1.mp4")
+
+    def test_flow_job_failed_returns_real_safe_error(self):
+        with (
+            patch.object(
+                task,
+                "_flow_worker_json_request",
+                return_value={"ok": False, "job_id": "job-1", "state": "failed", "error_code": "FLOW_DOWNLOAD_FAILED"},
+            ),
+            patch.object(task.time, "sleep"),
+        ):
+            with self.assertRaises(task.FlowJobFailed) as raised:
+                task._poll_flow_worker_job("http://worker", "job-1", 1)
+
+        self.assertEqual(raised.exception.code, "FLOW_DOWNLOAD_FAILED")
+
     def test_material_provenance_survives_scene_routing(self):
         updates = {}
 

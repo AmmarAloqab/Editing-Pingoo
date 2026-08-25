@@ -78,6 +78,12 @@ _VIDEO_MUSIC_PROVIDERS = {
     },
 }
 
+
+class FlowJobFailed(RuntimeError):
+    def __init__(self, code: str):
+        self.code = str(code or "FLOW_JOB_FAILED")
+        super().__init__(self.code)
+
 _MATERIAL_SOURCE_MODES = {
     "auto",
     "user_pexels",
@@ -656,6 +662,154 @@ def generate_audio(task_id, params, video_script, voice_preview=None):
             return None, None, None
         return custom_audio_file, audio_duration, None
 
+
+def _target_duration_attempts() -> int:
+    return max(0, int(os.getenv("PINGOO_SCRIPT_DURATION_ADJUST_ATTEMPTS", "2")))
+
+
+def _can_adjust_narration_duration(params, voice_preview: dict | None) -> bool:
+    if voice_preview:
+        return False
+    return not bool(str(getattr(params, "custom_audio_file", "") or "").strip())
+
+
+def _duration_adjustment_direction(params, audio_duration: float) -> str:
+    target = float(getattr(params, "target_duration_seconds", 0.0) or 0.0)
+    if target <= 0 or not audio_duration:
+        return ""
+    low, high = _duration_window(target)
+    if float(audio_duration) < low:
+        return "expand"
+    if float(audio_duration) > high:
+        return "shorten"
+    return ""
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!؟?])\s+", str(text or "").strip())
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _expand_narration_for_duration(script: str, params, attempt: int) -> str:
+    subject = str(getattr(params, "video_subject", "") or "هذا الموضوع").strip()
+    is_arabic = _is_arabic_params(params) or _is_arabic_text(script)
+    if is_arabic:
+        additions = [
+            (
+                f"ولكي تكتمل الصورة حول {subject}، من المهم النظر إلى الفكرة من زاويتين: "
+                "كيف تظهر في الحياة اليومية، ولماذا تؤثر في قرارات الناس خطوة بعد خطوة. "
+                "هذا يضيف سياقًا عمليًا يساعد المشاهد على فهم السبب والنتيجة بدل الاكتفاء بتعريف سريع."
+            ),
+            (
+                "ثم يمكن ربط الفكرة بمثال بسيط: عندما تتغير الظروف أو تتطور الأدوات، "
+                "تتغير طريقة الاستخدام، وتظهر فوائد ومخاطر تحتاج إلى انتباه. "
+                "بهذا يصبح الشرح أوضح، وتصبح النهاية مرتبطة ببداية القصة ومعناها الأساسي."
+            ),
+        ]
+    else:
+        additions = [
+            (
+                f"To make the idea clearer, consider how {subject} appears in everyday decisions, "
+                "what changes over time, and why those changes matter in practical situations."
+            ),
+            (
+                "A useful way to remember the point is to connect the concept to cause and effect: "
+                "one action creates a visible result, and that result shapes the next choice."
+            ),
+        ]
+    index = min(max(attempt - 1, 0), len(additions) - 1)
+    return f"{str(script or '').strip()}\n\n{additions[index]}".strip()
+
+
+def _shorten_narration_for_duration(script: str, audio_duration: float, params) -> str:
+    target = float(getattr(params, "target_duration_seconds", 0.0) or 0.0)
+    if target <= 0 or audio_duration <= 0:
+        return str(script or "").strip()
+    ratio = max(0.35, min(0.95, (target * 0.98) / float(audio_duration)))
+    sentences = _split_sentences(script)
+    if len(sentences) > 1:
+        keep = max(1, int(math.ceil(len(sentences) * ratio)))
+        return " ".join(sentences[:keep]).strip()
+    words = str(script or "").split()
+    keep = max(20, int(len(words) * ratio))
+    return " ".join(words[:keep]).strip()
+
+
+def _adjust_narration_for_duration(script: str, params, audio_duration: float, attempt: int) -> str:
+    direction = _duration_adjustment_direction(params, audio_duration)
+    if direction == "expand":
+        return _expand_narration_for_duration(script, params, attempt)
+    if direction == "shorten":
+        return _shorten_narration_for_duration(script, audio_duration, params)
+    return str(script or "").strip()
+
+
+def _retarget_scene_manifest_to_duration(params, accepted_duration: float) -> None:
+    scenes = _scene_manifest_items(params)
+    if not scenes or not accepted_duration:
+        return
+    current_total = sum(float(scene.get("duration_target") or scene.get("duration_seconds") or 0.0) for scene in scenes)
+    if current_total <= 0:
+        weights = [1 / len(scenes)] * len(scenes)
+    else:
+        weights = [float(scene.get("duration_target") or scene.get("duration_seconds") or 0.0) / current_total for scene in scenes]
+    remaining = float(accepted_duration)
+    retargeted = []
+    for index, scene in enumerate(scenes):
+        if index == len(scenes) - 1:
+            duration = max(0.5, remaining)
+        else:
+            duration = max(0.5, round(float(accepted_duration) * weights[index], 3))
+            remaining -= duration
+        updated = dict(scene)
+        updated["duration_seconds"] = duration
+        updated["duration_target"] = duration
+        retargeted.append(updated)
+    params.scene_manifest = retargeted
+
+
+def generate_audio_with_duration_target(task_id, params, video_script, voice_preview=None):
+    attempts = 0
+    current_script = str(video_script or "").strip()
+    max_attempts = _target_duration_attempts() if _can_adjust_narration_duration(params, voice_preview) else 0
+    while True:
+        _prepare_arabic_narration_fields(params, current_script)
+        audio_file, audio_duration, sub_maker = generate_audio(
+            task_id,
+            params,
+            current_script,
+            voice_preview=voice_preview if attempts == 0 else None,
+        )
+        if not audio_file:
+            return audio_file, audio_duration, sub_maker, current_script
+        direction = _duration_adjustment_direction(params, float(audio_duration or 0.0))
+        if not direction or attempts >= max_attempts:
+            _retarget_scene_manifest_to_duration(params, float(audio_duration or 0.0))
+            task_artifacts.patch_script_data(
+                task_id,
+                script=current_script,
+                tts_script_ar=getattr(params, "tts_script_ar", "") or "",
+                subtitle_text_ar=getattr(params, "subtitle_text_ar", "") or current_script,
+                scene_manifest=getattr(params, "scene_manifest", None) or [],
+                actual_narration_duration=float(audio_duration or 0.0),
+                duration_adjustment_attempts=attempts,
+                duration_adjustment_accepted=not bool(direction),
+            )
+            params.video_script = current_script
+            return audio_file, audio_duration, sub_maker, current_script
+        attempts += 1
+        logger.warning(
+            "PINGOO_SCRIPT_DURATION_ADJUST "
+            f"task_id={task_id} direction={direction} attempt={attempts} "
+            f"duration={float(audio_duration or 0.0):.2f} target={float(getattr(params, 'target_duration_seconds', 0.0) or 0.0):.2f}"
+        )
+        current_script = _adjust_narration_for_duration(
+            current_script,
+            params,
+            float(audio_duration or 0.0),
+            attempts,
+        )
+
 def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     '''
     Generate subtitle for the video script.
@@ -915,6 +1069,18 @@ def _flow_worker_timeout_seconds() -> int:
     )
 
 
+def _flow_worker_request_timeout_seconds() -> int:
+    return max(
+        3,
+        int(
+            os.getenv(
+                "PINGOO_FLOW_WORKER_REQUEST_TIMEOUT_SECONDS",
+                str(config.app.get("flow_worker_request_timeout_seconds", 30)),
+            )
+        ),
+    )
+
+
 def _max_auto_flow_scenes() -> int:
     return max(
         0,
@@ -931,6 +1097,9 @@ def _max_auto_flow_scenes() -> int:
 def _safe_flow_failure_code(exc: Exception | None = None, code: str = "FLOW_EMPTY_RESULT") -> str:
     if exc is None:
         return code
+    explicit_code = str(getattr(exc, "code", "") or "").strip()
+    if explicit_code:
+        return explicit_code
     if isinstance(exc, TimeoutError):
         return "FLOW_TIMEOUT"
     if isinstance(exc, urlerror.URLError):
@@ -999,6 +1168,56 @@ def _remember_asset(material_path: str, used_asset_keys: set[str]) -> None:
     if key:
         used_asset_keys.add(key)
 
+def _flow_worker_json_request(url: str, *, payload: dict | None = None, method: str = "GET") -> dict:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    request = urlrequest.Request(url, data=data, headers=headers, method=method)
+    with urlrequest.urlopen(request, timeout=_flow_worker_request_timeout_seconds()) as response:
+        body = response.read().decode("utf-8")
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise ValueError("Flow worker returned non-object JSON")
+    return parsed
+
+
+def _poll_flow_worker_job(worker_url: str, job_id: str, scene_id: int) -> str:
+    deadline = time.monotonic() + _flow_worker_timeout_seconds()
+    status_url = f"{worker_url}/flow/jobs/{job_id}"
+    last_state = ""
+    while time.monotonic() < deadline:
+        try:
+            data = _flow_worker_json_request(status_url)
+        except (urlerror.URLError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "PINGOO_FLOW_JOB_POLL_RETRY "
+                f"scene={scene_id} job_id={job_id} error={type(exc).__name__}"
+            )
+            time.sleep(5)
+            continue
+
+        state = str(data.get("state") or "").lower()
+        if state and state != last_state:
+            logger.info(
+                "PINGOO_FLOW_JOB_STATE "
+                f"scene={scene_id} job_id={job_id} state={state}"
+            )
+            last_state = state
+        if state == "completed":
+            material_url = str(data.get("material_url") or "").strip()
+            if not material_url:
+                raise FlowJobFailed("FLOW_EMPTY_RESULT")
+            logger.info(f"PINGOO_FLOW_GENERATION_FINISHED scene={scene_id}")
+            logger.info(f"PINGOO_FLOW_GENERATED scene={scene_id}")
+            logger.info(f"PINGOO_FLOW_DOWNLOADED_ON_WINDOWS scene={scene_id}")
+            logger.info(f"PINGOO_FLOW_UPLOADED_TO_VPS scene={scene_id}")
+            logger.info(f"PINGOO_FLOW_UPLOADED scene={scene_id}")
+            return material_url
+        if state == "failed":
+            raise FlowJobFailed(str(data.get("error_code") or data.get("error") or "FLOW_JOB_FAILED"))
+        time.sleep(5)
+    raise FlowJobFailed("FLOW_JOB_POLL_TIMEOUT")
+
+
 def _call_flow_worker_for_scene(scene: dict, params) -> str:
     worker_url = _flow_worker_url()
     if not worker_url:
@@ -1012,38 +1231,35 @@ def _call_flow_worker_for_scene(scene: dict, params) -> str:
         )
         return ""
 
-    logger.info(f"PINGOO_FLOW_REQUEST scene={scene['scene_id']}")
-    logger.info(f"PINGOO_FLOW_GENERATION_STARTED scene={scene['scene_id']}")
+    scene_id = int(scene["scene_id"])
+    logger.info(f"PINGOO_FLOW_REQUEST scene={scene_id}")
+    logger.info(f"PINGOO_FLOW_GENERATION_STARTED scene={scene_id}")
     payload = {
-        "scene_id": scene["scene_id"],
+        "scene_id": scene_id,
         "prompt": prompt,
         "aspect_ratio": str(getattr(params, "video_aspect", "9:16") or "9:16"),
         "media_type": "video",
     }
-    request = urlrequest.Request(
+    data = _flow_worker_json_request(
         f"{worker_url}/flow/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        payload=payload,
         method="POST",
     )
-    with urlrequest.urlopen(request, timeout=_flow_worker_timeout_seconds()) as response:
-        body = response.read().decode("utf-8")
+    job_id = str(data.get("job_id") or "").strip()
+    if job_id:
+        logger.info(f"PINGOO_FLOW_JOB_CREATED scene={scene_id} job_id={job_id}")
+        return _poll_flow_worker_job(worker_url, job_id, scene_id)
 
-    data = json.loads(body)
     if not data.get("ok"):
-        logger.warning(
-            "PINGOO_FLOW_FAILED "
-            f"scene={scene['scene_id']} reason=FLOW_WORKER_REJECTED"
-        )
-        return ""
+        raise FlowJobFailed(str(data.get("error_code") or data.get("error") or "FLOW_WORKER_REJECTED"))
 
     material_url = str(data.get("material_url") or "").strip()
     if material_url:
-        logger.info(f"PINGOO_FLOW_GENERATION_FINISHED scene={scene['scene_id']}")
-        logger.info(f"PINGOO_FLOW_GENERATED scene={scene['scene_id']}")
-        logger.info(f"PINGOO_FLOW_DOWNLOADED_ON_WINDOWS scene={scene['scene_id']}")
-        logger.info(f"PINGOO_FLOW_UPLOADED_TO_VPS scene={scene['scene_id']}")
-        logger.info(f"PINGOO_FLOW_UPLOADED scene={scene['scene_id']}")
+        logger.info(f"PINGOO_FLOW_GENERATION_FINISHED scene={scene_id}")
+        logger.info(f"PINGOO_FLOW_GENERATED scene={scene_id}")
+        logger.info(f"PINGOO_FLOW_DOWNLOADED_ON_WINDOWS scene={scene_id}")
+        logger.info(f"PINGOO_FLOW_UPLOADED_TO_VPS scene={scene_id}")
+        logger.info(f"PINGOO_FLOW_UPLOADED scene={scene_id}")
     return material_url
 
 
@@ -1166,7 +1382,7 @@ def _route_scene_materials(
             flow_failure_code = "FLOW_EMPTY_RESULT"
             try:
                 material_path = _call_flow_worker_for_scene(scene, params)
-            except (OSError, urlerror.URLError, TimeoutError, ValueError) as exc:
+            except (FlowJobFailed, OSError, urlerror.URLError, TimeoutError, ValueError) as exc:
                 flow_failure_code = _safe_flow_failure_code(exc)
                 logger.warning(
                     "PINGOO_FLOW_FAILED "
@@ -2158,7 +2374,7 @@ def _run_pipeline(
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=20)
 
     # 3. Generate audio
-    audio_file, audio_duration, sub_maker = generate_audio(
+    audio_file, audio_duration, sub_maker, video_script = generate_audio_with_duration_target(
         task_id,
         params,
         video_script,

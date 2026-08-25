@@ -1898,6 +1898,117 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(report["flow_scene_ids"], [1, 2])
         self.assertTrue(report["artifact_validation_pass"])
 
+
+    def test_short_narration_for_target_60_triggers_expansion(self):
+        task_id = f"duration-expand-{uuid4()}"
+        task_dir = self._write_task_script(task_id, {})
+        params = VideoParams(
+            video_subject="gravity",
+            video_language="ar-SA",
+            voice_name="ar-SA-HamedNeural",
+            target_duration_seconds=60,
+            scene_manifest=[
+                {"scene_id": 1, "visual_query": "city", "duration_target": 30},
+                {"scene_id": 2, "visual_query": "sky", "duration_target": 30},
+            ],
+        )
+        try:
+            with patch.object(
+                tm,
+                "generate_audio",
+                side_effect=[("audio.mp3", 39, object()), ("audio.mp3", 55, object())],
+            ) as generate_audio:
+                _audio, duration, _sub_maker, final_script = tm.generate_audio_with_duration_target(
+                    task_id,
+                    params,
+                    "شرح قصير عن الجاذبية.",
+                )
+
+            self.assertEqual(duration, 55)
+            self.assertEqual(generate_audio.call_count, 2)
+            self.assertIn("الجاذبية", final_script)
+            self.assertGreater(len(final_script), len("شرح قصير عن الجاذبية."))
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_narration_regenerates_until_target_window(self):
+        task_id = f"duration-retry-{uuid4()}"
+        task_dir = self._write_task_script(task_id, {})
+        params = VideoParams(
+            video_subject="gravity",
+            target_duration_seconds=60,
+            scene_manifest=[
+                {"scene_id": 1, "visual_query": "city", "duration_target": 30},
+                {"scene_id": 2, "visual_query": "sky", "duration_target": 30},
+            ],
+        )
+        try:
+            with patch.object(
+                tm,
+                "generate_audio",
+                side_effect=[("audio.mp3", 39, object()), ("audio.mp3", 58, object())],
+            ) as generate_audio:
+                _audio, duration, _sub_maker, _final_script = tm.generate_audio_with_duration_target(
+                    task_id,
+                    params,
+                    "Short gravity script.",
+                )
+
+            self.assertEqual(duration, 58)
+            self.assertEqual(generate_audio.call_count, 2)
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_materials_do_not_start_before_duration_acceptance(self):
+        params = VideoParams(
+            video_subject="gravity",
+            video_source="pexels",
+            target_duration_seconds=60,
+            scene_manifest=[
+                {"scene_id": i, "visual_query": str(i), "duration_target": 7.5}
+                for i in range(1, 9)
+            ],
+        )
+        state = MemoryState()
+        with (
+            patch.object(tm, "generate_script", return_value="short script"),
+            patch.object(tm, "generate_terms", return_value=["gravity"]),
+            patch.object(tm, "generate_audio_with_duration_target", return_value=("audio.mp3", 39, object(), "short script")),
+            patch.object(tm, "generate_subtitle", return_value=""),
+            patch.object(tm, "get_video_materials") as get_materials,
+            patch.object(tm.sm, "state", state),
+        ):
+            result = tm.start("duration-block-before-materials", params)
+
+        get_materials.assert_not_called()
+        self.assertEqual(result["state"], tm.const.TASK_STATE_FAILED)
+        self.assertEqual(result["failed_stage"], "duration")
+        self.assertIn("NARRATION_DURATION_OUT_OF_TOLERANCE", result["error"])
+
+    def test_scene_manifest_uses_accepted_narration_duration(self):
+        task_id = f"duration-scenes-{uuid4()}"
+        task_dir = self._write_task_script(task_id, {})
+        params = VideoParams(
+            video_subject="gravity",
+            target_duration_seconds=60,
+            scene_manifest=[
+                {"scene_id": 1, "visual_query": "city", "duration_target": 30},
+                {"scene_id": 2, "visual_query": "sky", "duration_target": 30},
+            ],
+        )
+        try:
+            with patch.object(tm, "generate_audio", return_value=("audio.mp3", 58, object())):
+                _audio, duration, _sub_maker, _script = tm.generate_audio_with_duration_target(
+                    task_id,
+                    params,
+                    "Accepted duration script.",
+                )
+
+            self.assertEqual(duration, 58)
+            self.assertAlmostEqual(sum(tm._scene_duration_targets(params)), 58.0, places=2)
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
     @unittest.skipUnless(
         RUN_INTEGRATION_TESTS,
         "MPT_RUN_INTEGRATION_TESTS not set",

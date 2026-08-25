@@ -1,16 +1,18 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.google_flow_worker.config import FlowWorkerConfig
-from tools.google_flow_worker.errors import FlowAuthRequired
+from tools.google_flow_worker.errors import FlowAuthRequired, PingooUploadFailed
 from tools.google_flow_worker.flow_browser import GoogleFlowBrowser
 from tools.google_flow_worker.planner import (
     build_flow_prompt,
     select_auto_flow_candidates,
 )
-from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate
+from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate, flow_job_status
 from tools.google_flow_worker.config import get_config
 
 
@@ -86,6 +88,16 @@ class GoogleFlowWorkerPlannerTest(unittest.TestCase):
 
 
 class GoogleFlowWorkerEndpointTest(unittest.TestCase):
+    def _wait_for_job(self, job_id, state, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        result = flow_job_status(job_id)
+        while time.monotonic() < deadline:
+            result = flow_job_status(job_id)
+            if result["state"] == state:
+                return result
+            time.sleep(0.02)
+        return result
+
     def test_flow_failure_falls_back_as_error_without_upload(self):
         with patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls:
             browser_cls.return_value.generate_and_download.side_effect = FlowAuthRequired(
@@ -94,9 +106,11 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
             result = flow_generate(
                 FlowGenerateRequest(scene_id=3, prompt="prompt")
             )
+            failed = self._wait_for_job(result["job_id"], "failed")
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"], "FLOW_AUTH_REQUIRED")
+        self.assertEqual(result["state"], "queued")
+        self.assertFalse(failed["ok"])
+        self.assertEqual(failed["error_code"], "FLOW_AUTH_REQUIRED")
 
     def test_success_uploads_and_removes_temp_download(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -110,12 +124,54 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
                 result = flow_generate(
                     FlowGenerateRequest(scene_id=1, prompt="prompt")
                 )
+                completed = self._wait_for_job(result["job_id"], "completed")
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["source"], "flow")
-            self.assertEqual(result["material_url"], "flow.mp4")
+            self.assertEqual(result["state"], "queued")
+            self.assertTrue(completed["ok"])
+            self.assertEqual(completed["source"], "flow")
+            self.assertEqual(completed["material_url"], "flow.mp4")
             upload.assert_called_once()
             self.assertFalse(path.exists())
+
+    def test_long_generation_returns_running_job_without_network_error(self):
+        release = threading.Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.mp4"
+            path.write_bytes(b"video")
+
+            def slow_generate(**_kwargs):
+                release.wait(1.0)
+                return path
+
+            with (
+                patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls,
+                patch("tools.google_flow_worker.worker.upload_material", return_value="flow.mp4"),
+            ):
+                browser_cls.return_value.generate_and_download.side_effect = slow_generate
+                result = flow_generate(FlowGenerateRequest(scene_id=4, prompt="prompt"))
+                running = self._wait_for_job(result["job_id"], "generating", timeout=0.5)
+                release.set()
+                completed = self._wait_for_job(result["job_id"], "completed")
+
+        self.assertEqual(result["state"], "queued")
+        self.assertEqual(running["state"], "generating")
+        self.assertNotEqual(running.get("error_code"), "FLOW_NETWORK_ERROR")
+        self.assertEqual(completed["material_url"], "flow.mp4")
+
+    def test_upload_failure_is_distinct_from_generation_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.mp4"
+            path.write_bytes(b"video")
+            with (
+                patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls,
+                patch("tools.google_flow_worker.worker.upload_material", side_effect=PingooUploadFailed("upload failed")),
+            ):
+                browser_cls.return_value.generate_and_download.return_value = path
+                result = flow_generate(FlowGenerateRequest(scene_id=5, prompt="prompt"))
+                failed = self._wait_for_job(result["job_id"], "failed")
+
+        self.assertEqual(failed["error_code"], "PINGOO_UPLOAD_FAILED")
+        self.assertNotEqual(failed["error_code"], "FLOW_GENERATION_FAILED")
 
     def test_diagnostics_endpoint_returns_safe_fields(self):
         expected = {

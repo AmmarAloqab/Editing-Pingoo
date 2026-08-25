@@ -294,6 +294,7 @@ class GoogleFlowBrowser:
         prompt: str,
         aspect_ratio: str = "9:16",
         media_type: str = "video",
+        log_event=None,
     ) -> Path:
         started = time.monotonic()
         timeout_ms = self.config.generation_timeout_seconds * 1000
@@ -305,8 +306,10 @@ class GoogleFlowBrowser:
                 if not self._is_authenticated(page):
                     raise FlowAuthRequired("Google Flow authenticated session required")
 
-                self._submit_prompt(page, prompt, aspect_ratio, media_type)
-                download_path = self._wait_for_download(page, scene_id, timeout_ms)
+                self._submit_prompt(page, prompt, aspect_ratio, media_type, log_event=log_event)
+                if log_event:
+                    log_event("FLOW_GENERATION_WAITING")
+                download_path = self._wait_for_download(page, scene_id, timeout_ms, log_event=log_event)
                 elapsed = time.monotonic() - started
                 if elapsed > self.config.generation_timeout_seconds:
                     raise FlowGenerationTimeout("Google Flow generation timed out")
@@ -319,7 +322,7 @@ class GoogleFlowBrowser:
             finally:
                 context.close()
 
-    def _submit_prompt(self, page, prompt: str, aspect_ratio: str, media_type: str) -> None:
+    def _submit_prompt(self, page, prompt: str, aspect_ratio: str, media_type: str, log_event=None) -> None:
         try:
             prompt_box = page.get_by_role("textbox").first
             prompt_box.fill(prompt, timeout=30000)
@@ -342,19 +345,29 @@ class GoogleFlowBrowser:
         for button_name in ("Generate", "Create", "Submit"):
             try:
                 page.get_by_role("button", name=button_name).click(timeout=5000)
+                if log_event:
+                    log_event("FLOW_PROMPT_SUBMITTED")
                 return
             except Exception:
                 continue
         raise FlowUiChanged("Could not find Flow generate button")
 
-    def _wait_for_download(self, page, scene_id: int, timeout_ms: int) -> Path:
+    def _wait_for_download(self, page, scene_id: int, timeout_ms: int, log_event=None) -> Path:
         deadline = time.monotonic() + (timeout_ms / 1000)
+        download_started_logged = False
+        generation_completed_logged = False
         while time.monotonic() < deadline:
             try:
                 with page.expect_download(timeout=5000) as download_info:
                     for name in ("Download", "Export", "Save"):
                         try:
                             page.get_by_role("button", name=name).first.click(timeout=3000)
+                            if log_event and not generation_completed_logged:
+                                log_event("FLOW_GENERATION_COMPLETED")
+                                generation_completed_logged = True
+                            if log_event and not download_started_logged:
+                                log_event("FLOW_DOWNLOAD_STARTED")
+                                download_started_logged = True
                             break
                         except Exception:
                             continue
@@ -362,6 +375,8 @@ class GoogleFlowBrowser:
                 suffix = Path(download.suggested_filename or "").suffix or ".mp4"
                 target = self.config.downloads_dir / f"flow-scene-{scene_id}-{int(time.time())}{suffix}"
                 download.save_as(str(target))
+                if log_event:
+                    log_event("FLOW_DOWNLOAD_COMPLETED")
                 return target
             except PlaywrightTimeoutError:
                 page.wait_for_timeout(5000)
