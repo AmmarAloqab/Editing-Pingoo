@@ -1802,6 +1802,102 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(warnings[-1]["code"], "artifact_acceptance_failed")
         self.assertLess(update_task.call_count, 2)
 
+
+    def test_preferred_flow_source_reaches_renderer_when_successful(self):
+        task_id = f"flow-render-{uuid4()}"
+        task_dir = self._write_task_script(
+            task_id,
+            {
+                "scene_material_assignments": [
+                    {
+                        "scene_id": 1,
+                        "source": "flow",
+                        "material": "flow-1.mp4",
+                        "query": "city losing gravity",
+                        "duration_target": 7.5,
+                        "preferred_source": "flow",
+                    },
+                    {
+                        "scene_id": 2,
+                        "source": "flow",
+                        "material": "flow-2.mp4",
+                        "query": "cars floating",
+                        "duration_target": 7.5,
+                        "preferred_source": "flow",
+                    },
+                ]
+            },
+        )
+        try:
+            params = VideoParams(
+                video_subject="gravity",
+                video_count=1,
+                target_duration_seconds=15,
+                material_source_mode="flow_user_pexels",
+                scene_manifest=[
+                    {"scene_id": 1, "visual_query": "city", "duration_target": 7.5},
+                    {"scene_id": 2, "visual_query": "cars", "duration_target": 7.5},
+                ],
+            )
+            with (
+                patch.object(tm.video, "combine_videos") as combine,
+                patch.object(tm.video, "generate_video", return_value=True),
+                patch.object(tm.sm.state, "update_task"),
+                patch.object(tm, "_validate_final_artifact", return_value=[]),
+                patch.object(tm, "_mark_rendered_provenance_used"),
+            ):
+                tm.generate_final_videos(
+                    task_id=task_id,
+                    params=params,
+                    downloaded_videos=["flow-1.mp4", "flow-2.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="subtitle.srt",
+                    audio_duration=15,
+                )
+
+            self.assertEqual(combine.call_args.kwargs["video_paths"], ["flow-1.mp4", "flow-2.mp4"])
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def test_target_60_narration_outside_window_fails_before_render(self):
+        params = VideoParams(
+            video_subject="gravity",
+            target_duration_seconds=60,
+            scene_manifest=[
+                {"scene_id": i, "visual_query": str(i), "duration_target": 7.5}
+                for i in range(1, 9)
+            ],
+        )
+
+        self.assertEqual(
+            tm._validate_duration_before_render(params, 39.0),
+            ["NARRATION_DURATION_OUT_OF_TOLERANCE"],
+        )
+
+    def test_final_material_report_counts_rendered_materials_only(self):
+        manifest = {
+            "actual_final_duration": 60.0,
+            "validation_errors": [],
+            "scenes": [
+                {"scene_id": 1, "source": "flow", "preferred_source": "flow", "material_path": "flow-1.mp4"},
+                {"scene_id": 2, "source": "flow", "preferred_source": "flow", "material_path": "flow-2.mp4"},
+                {"scene_id": 3, "source": "pexels", "preferred_source": "pexels", "material_path": "pexels-1.mp4"},
+                {"scene_id": 4, "source": "user", "preferred_source": "pexels", "material_path": "user-1.mp4"},
+                {"scene_id": 5, "source": "pexels", "preferred_source": "flow", "material_path": "pexels-1.mp4"},
+            ],
+        }
+
+        report = tm._build_final_material_report(manifest)
+
+        self.assertEqual(report["flow_count"], 2)
+        self.assertEqual(report["pexels_count"], 2)
+        self.assertEqual(report["user_material_count"], 1)
+        self.assertEqual(report["unique_material_count"], 4)
+        self.assertEqual(report["duplicate_count"], 1)
+        self.assertEqual(report["flow_fallback_count"], 1)
+        self.assertEqual(report["flow_scene_ids"], [1, 2])
+        self.assertTrue(report["artifact_validation_pass"])
+
     @unittest.skipUnless(
         RUN_INTEGRATION_TESTS,
         "MPT_RUN_INTEGRATION_TESTS not set",

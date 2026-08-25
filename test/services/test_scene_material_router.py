@@ -540,7 +540,7 @@ class SceneMaterialRouterTest(unittest.TestCase):
             ["flow", "pexels"],
         )
 
-    def test_flow_worker_failure_falls_back_to_user_then_pexels(self):
+    def test_flow_worker_failure_produces_safe_failure_code_without_pexels_fallback(self):
         calls = []
         assignments = {}
 
@@ -573,6 +573,7 @@ class SceneMaterialRouterTest(unittest.TestCase):
             patch.object(task, "_call_flow_worker_for_scene", fake_flow),
             patch.object(task, "_max_auto_flow_scenes", lambda: 2),
             patch.object(task.material, "download_videos", fake_download_videos),
+            patch.object(task.sm.state, "update_task"),
             patch.object(
                 task.task_artifacts,
                 "patch_script_data",
@@ -586,13 +587,11 @@ class SceneMaterialRouterTest(unittest.TestCase):
                 20,
             )
 
-        self.assertEqual(result, ["user-1.mp4", "/tmp/fallback.mp4"])
-        self.assertEqual(calls[0][0], "flow")
-        self.assertEqual(calls[1][0], "pexels")
-        self.assertEqual(
-            [item["source"] for item in assignments["scene_material_assignments"]],
-            ["user", "pexels"],
-        )
+        self.assertIsNone(result)
+        self.assertEqual(calls, [("flow", 1)])
+        self.assertEqual(assignments["scene_material_assignments"][0]["source"], "flow")
+        self.assertEqual(assignments["scene_material_assignments"][0]["status"], "failed")
+        self.assertEqual(assignments["scene_material_assignments"][0]["fallback_reason"], "FLOW_EMPTY_RESULT")
 
 
     def test_material_provenance_survives_scene_routing(self):
@@ -634,6 +633,49 @@ class SceneMaterialRouterTest(unittest.TestCase):
         self.assertEqual(provenance[0]["local_path"], "flow-1.mp4")
         self.assertFalse(provenance[0]["used_in_final_render"])
         self.assertEqual(provenance[1]["source"], "pexels")
+
+
+    def test_two_required_flow_scenes_below_threshold_fails(self):
+        assignments = {}
+        params = VideoParams(
+            video_subject="gravity",
+            video_terms=[],
+            video_source="pexels",
+            video_clip_duration=4,
+            match_materials_to_script=True,
+            material_source_mode="flow_user_pexels",
+            scene_manifest=[
+                _flow_scene(1, "city losing gravity"),
+                _flow_scene(2, "cars floating"),
+                _scene(3, "ocean rising"),
+            ],
+        )
+
+        with (
+            patch.object(task, "_call_flow_worker_for_scene", side_effect=["flow-1.mp4", ""]),
+            patch.object(task, "_max_auto_flow_scenes", lambda: 2),
+            patch.object(task.material, "download_videos", return_value=["pexels-3.mp4"]),
+            patch.object(task.sm.state, "update_task") as update_task,
+            patch.object(
+                task.task_artifacts,
+                "patch_script_data",
+                lambda task_id, **updates: assignments.update(updates) or True,
+            ),
+        ):
+            result = task.get_video_materials(
+                "two-flow-required",
+                params,
+                params.video_terms,
+                60,
+            )
+
+        self.assertIsNone(result)
+        update_task.assert_called()
+        self.assertEqual(
+            [item["status"] for item in assignments["scene_material_assignments"][:2]],
+            ["assigned", "failed"],
+        )
+        self.assertEqual(assignments["material_provenance"][1]["fallback_reason"], "FLOW_EMPTY_RESULT")
 
 
 if __name__ == "__main__":

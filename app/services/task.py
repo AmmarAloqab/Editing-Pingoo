@@ -772,6 +772,65 @@ def _material_provenance_from_assignments(assignments: list[dict]) -> list[dict]
 def _patch_material_provenance(task_id: str, assignments: list[dict]) -> None:
     task_artifacts.patch_script_data(task_id, material_provenance=_material_provenance_from_assignments(assignments))
 
+
+def _required_flow_scene_count(params) -> int:
+    if _material_source_mode(params) != "flow_user_pexels":
+        return 0
+    preferred = [
+        scene
+        for scene in _scene_manifest_items(params)
+        if str(scene.get("preferred_source") or "").lower() == "flow"
+    ]
+    return min(len(preferred), max(0, _max_auto_flow_scenes()))
+
+
+def _duration_window(target: float) -> tuple[float, float]:
+    return target * 0.9, target * 1.1
+
+
+def _validate_duration_before_render(params, audio_duration: float) -> list[str]:
+    target = float(getattr(params, "target_duration_seconds", 0.0) or 0.0)
+    if target <= 0:
+        return []
+    low, high = _duration_window(target)
+    errors: list[str] = []
+    planned = sum(_scene_duration_targets(params))
+    if planned and not (low <= planned <= high):
+        errors.append("PLANNED_DURATION_OUT_OF_TOLERANCE")
+    if audio_duration and not (low <= float(audio_duration) <= high):
+        errors.append("NARRATION_DURATION_OUT_OF_TOLERANCE")
+    return errors
+
+
+def _build_final_material_report(manifest: dict) -> dict:
+    scenes = list(manifest.get("scenes") or [])
+    material_paths = [str(scene.get("material_path") or "") for scene in scenes if scene.get("material_path")]
+    unique_paths = set(material_paths)
+    source_counts = {"flow": 0, "pexels": 0, "user": 0}
+    flow_scene_ids: list[int] = []
+    flow_fallback_count = 0
+    for scene in scenes:
+        source = str(scene.get("source") or "unknown")
+        if source in source_counts:
+            source_counts[source] += 1
+        if source == "flow":
+            flow_scene_ids.append(int(scene.get("scene_id") or 0))
+        if str(scene.get("preferred_source") or "").lower() == "flow" and source != "flow":
+            flow_fallback_count += 1
+    duplicate_count = len(material_paths) - len(unique_paths)
+    return {
+        "final_duration": float(manifest.get("actual_final_duration") or 0.0),
+        "scene_count": len(scenes),
+        "unique_material_count": len(unique_paths),
+        "flow_count": source_counts["flow"],
+        "pexels_count": source_counts["pexels"],
+        "user_material_count": source_counts["user"],
+        "duplicate_count": duplicate_count,
+        "flow_fallback_count": flow_fallback_count,
+        "flow_scene_ids": [sid for sid in flow_scene_ids if sid],
+        "artifact_validation_pass": not bool(manifest.get("validation_errors")),
+    }
+
 def _persist_scene_material_assignments(task_id: str, assignments: list[dict]) -> None:
     try:
         task_artifacts.patch_script_data(
@@ -1104,12 +1163,14 @@ def _route_scene_materials(
             and preferred_source == "flow"
             and generated_flow_scenes < max_flow_scenes
         ):
+            flow_failure_code = "FLOW_EMPTY_RESULT"
             try:
                 material_path = _call_flow_worker_for_scene(scene, params)
             except (OSError, urlerror.URLError, TimeoutError, ValueError) as exc:
+                flow_failure_code = _safe_flow_failure_code(exc)
                 logger.warning(
                     "PINGOO_FLOW_FAILED "
-                    f"scene={scene_id} reason={_safe_flow_failure_code(exc)}"
+                    f"scene={scene_id} reason={flow_failure_code}"
                 )
                 material_path = ""
 
@@ -1130,8 +1191,18 @@ def _route_scene_materials(
             if not material_path:
                 logger.warning(
                     "PINGOO_FLOW_FAILED "
-                    f"scene={scene_id} reason={_safe_flow_failure_code(code='FLOW_EMPTY_RESULT')}"
+                    f"scene={scene_id} reason={flow_failure_code} strict=true"
                 )
+                assign_scene_material(
+                    scene,
+                    "flow",
+                    "",
+                    query,
+                    status="failed",
+                    fallback_used=False,
+                    fallback_reason=flow_failure_code,
+                )
+                continue
 
         user_assigned = False
         while used_user_materials < len(supplemental_paths):
@@ -1213,6 +1284,23 @@ def _route_scene_materials(
         "PINGOO_SCENE_ROUTER assignments: "
         f"{utils.to_json(assignments)}"
     )
+    required_flow = _required_flow_scene_count(params)
+    assigned_flow = sum(
+        1
+        for item in assignments
+        if item.get("source") == "flow" and item.get("status") == "assigned"
+    )
+    if required_flow and assigned_flow < required_flow:
+        failed = [
+            f"scene={item.get('scene_id')}:{item.get('fallback_reason') or 'FLOW_NOT_RENDERED'}"
+            for item in assignments
+            if item.get("preferred_source") == "flow" and item.get("source") == "flow" and item.get("status") != "assigned"
+        ]
+        error = "FLOW_SCENES_RENDERED_BELOW_REQUIRED"
+        if failed:
+            error = f"{error}; " + ", ".join(failed)
+        _mark_task_failed(task_id, "materials", error)
+        return []
     return material_paths
 
 def get_video_materials(task_id, params, video_terms, audio_duration):
@@ -2108,6 +2196,17 @@ def _run_pipeline(
         )
         return {"subtitle_path": subtitle_path}
 
+    duration_errors = _validate_duration_before_render(params, audio_duration)
+    if duration_errors:
+        task_artifacts.patch_script_data(
+            task_id,
+            pre_render_duration_errors=duration_errors,
+            actual_narration_duration=float(audio_duration or 0.0),
+            planned_scene_duration=sum(_scene_duration_targets(params)),
+            target_duration_seconds=float(getattr(params, "target_duration_seconds", 0.0) or 0.0),
+        )
+        return _mark_task_failed(task_id, "duration", ", ".join(duration_errors))
+
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=40)
 
     # 5. Get video materials
@@ -2148,10 +2247,14 @@ def _run_pipeline(
     )
 
     if not final_video_paths:
+        artifact_errors = []
+        for warning in generation_warnings or []:
+            if warning.get("code") == "artifact_acceptance_failed":
+                artifact_errors.extend(warning.get("errors") or [])
         return _mark_task_failed(
             task_id,
             "video",
-            "failed to generate final video",
+            ", ".join(artifact_errors) or "failed to generate final video",
         )
 
     logger.success(
@@ -2176,9 +2279,15 @@ def _run_pipeline(
         )
     cross_post_state = const.CROSS_POST_STATE_PENDING if should_cross_post else None
 
+    script_data = _load_script_data(task_id)
+    final_render_manifest = script_data.get("final_render_manifest") or {}
+    final_material_report = _build_final_material_report(final_render_manifest)
+
     kwargs = {
         "videos": final_video_paths,
         "combined_videos": combined_video_paths,
+        "final_render_manifest": final_render_manifest,
+        "final_material_report": final_material_report,
         "script": video_script,
         "terms": video_terms,
         "audio_file": audio_file,

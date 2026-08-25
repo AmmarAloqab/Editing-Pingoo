@@ -82,6 +82,49 @@ class N8nOnePromptWorkflowTest(unittest.TestCase):
         self.assertIn("/جاذبية|الجاذبية|gravity/i.test(requirements.topic)", code)
         self.assertIn("'flow'", code)
 
+    def test_scheduled_poll_failed_state_wins_over_combined_video(self):
+        code = _node("Update Scheduled Status")["parameters"]["jsCode"]
+
+        self.assertIn("const failed = payload.state === -1", code)
+        self.assertIn("if (failed) {\n    status='failed';", code)
+        self.assertIn("const hasFinalVideos = Array.isArray(payload.videos)", code)
+        self.assertNotIn("Array.isArray(payload.combined_videos) &&\n      payload.combined_videos.length > 0\n    );\n\n  if (\n    progress >= 100 ||\n    hasVideos", code)
+
+    def test_polling_stops_and_failed_task_does_not_stay_at_40(self):
+        load = _node("Load Pending Jobs")["parameters"]["jsCode"]
+        update = _node("Update Scheduled Status")["parameters"]["jsCode"]
+
+        self.assertIn("j.status === 'submitted'", load)
+        self.assertIn("j.status === 'processing'", load)
+        self.assertNotIn("j.status === 'failed'", load)
+        self.assertIn("send_failure_notice:sendFailureNotice", update)
+        self.assertIn("❌ فشلت مهمة الفيديو", update)
+        self.assertIn("progress,", update)
+
+    def test_failed_detection_sends_sanitized_telegram_notice(self):
+        failed_gate = _node("Failed Detection Gate")["parameters"]["jsCode"]
+        failed_send = _node("Telegram Failed Proof")["parameters"]
+
+        self.assertIn("send_failure_notice === true", failed_gate)
+        self.assertEqual(failed_send["operation"], "sendMessage")
+        self.assertEqual(failed_send["text"], "={{ $json.failure_notice }}")
+        self.assertIn("Failed Detection Gate", _workflow()["connections"])
+
+    def test_final_success_report_reads_actual_render_manifest_summary(self):
+        code = _node("Completed Detection Gate")["parameters"]["jsCode"]
+
+        self.assertIn("final_material_report", code)
+        self.assertIn("تقرير المواد النهائي", code)
+        self.assertIn("Google Flow count", code)
+        self.assertIn("Artifact Validation", code)
+        self.assertIn("flow_scene_ids", code)
+
+    def test_build_fast_script_extends_gravity_narration_for_target_duration(self):
+        code = _node("Build Fast Script")["parameters"]["jsCode"]
+
+        self.assertIn("while (words.length < minWords)", code)
+        self.assertIn("خلال هذه الثواني القصيرة", code)
+
     def test_completed_video_delivery_resolves_final_url_and_sends_video(self):
         capture = _node("Capture Final Video")["parameters"]["jsCode"]
         send = _node("Telegram Send Final Video")["parameters"]
