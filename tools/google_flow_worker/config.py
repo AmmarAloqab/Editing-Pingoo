@@ -39,6 +39,7 @@ class FlowWorkerConfig:
     profile_dir: Path | None = None
     downloads_dir: Path | None = None
     logs_dir: Path | None = None
+    diagnostics_dir: Path | None = None
     flow_url: str = os.getenv(
         "PINGOO_FLOW_URL",
         "https://labs.google/fx/tools/flow",
@@ -73,6 +74,11 @@ class FlowWorkerConfig:
         object.__setattr__(self, "profile_dir", self.profile_dir or self.base_dir / "profile")
         object.__setattr__(self, "downloads_dir", self.downloads_dir or self.base_dir / "downloads")
         object.__setattr__(self, "logs_dir", self.logs_dir or self.base_dir / "logs")
+        object.__setattr__(
+            self,
+            "diagnostics_dir",
+            self.diagnostics_dir or self.base_dir / "diagnostics",
+        )
 
 
 def get_config() -> FlowWorkerConfig:
@@ -86,5 +92,6 @@ def ensure_runtime_dirs(config: FlowWorkerConfig | None = None) -> None:
         cfg.profile_dir,
         cfg.downloads_dir,
         cfg.logs_dir,
+        cfg.diagnostics_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)

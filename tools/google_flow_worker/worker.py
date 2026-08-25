@@ -158,6 +158,11 @@ def flow_workspace_probe():
     return GoogleFlowBrowser(config).workspace_probe()
 
 
+@app.get("/flow/dry_run")
+def flow_dry_run():
+    return GoogleFlowBrowser(config).dry_run()
+
+
 @app.post("/flow/generate")
 def flow_generate(request: FlowGenerateRequest):
     job_id = uuid4().hex

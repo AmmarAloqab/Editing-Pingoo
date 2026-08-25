@@ -22,6 +22,10 @@ class FlowWorkspaceLoadChanged(FlowUiChanged):
     code = "FLOW_UI_CHANGED_WORKSPACE_LOAD"
 
 
+class FlowProjectNavigationFailed(FlowWorkspaceLoadChanged):
+    code = "FLOW_PROJECT_NAVIGATION_FAILED"
+
+
 class FlowPromptInputChanged(FlowUiChanged):
     code = "FLOW_UI_CHANGED_PROMPT_INPUT"
 

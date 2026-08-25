@@ -9,6 +9,7 @@ from tools.google_flow_worker.config import FlowWorkerConfig
 from tools.google_flow_worker.errors import (
     FlowAuthRequired,
     FlowGenerateActionChanged,
+    FlowProjectNavigationFailed,
     FlowProjectNavigationChanged,
     FlowPromptInputChanged,
     FlowWorkspaceLoadChanged,
@@ -22,6 +23,7 @@ from tools.google_flow_worker.planner import (
 from tools.google_flow_worker.worker import (
     FlowGenerateRequest,
     flow_diagnostics,
+    flow_dry_run,
     flow_generate,
     flow_job_status,
     flow_ui_inventory,
@@ -205,10 +207,11 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
 
 
 class FakeItem:
-    def __init__(self, text="", visible=True, attrs=None):
+    def __init__(self, text="", visible=True, attrs=None, children=None):
         self.text = text
         self.visible = visible
         self.attrs = attrs or {}
+        self.children = children or {}
         self.clicked = False
         self.filled = ""
 
@@ -230,6 +233,12 @@ class FakeItem:
 
     def get_attribute(self, name, timeout=None):
         return self.attrs.get(name)
+
+    def get_by_role(self, role, name=None):
+        items = self.children.get(role, [])
+        if name is None:
+            return FakeLocator(items)
+        return FakeLocator([item for item in items if hasattr(name, "search") and name.search(item.text)])
 
     def click(self, timeout=None):
         self.clicked = True
@@ -265,23 +274,54 @@ class EmptyLocator(FakeItem):
 
 
 class FakeFlowPage:
-    def __init__(self, *, buttons=None, links=None, inputs=None, placeholders=None):
+    def __init__(
+        self,
+        *,
+        buttons=None,
+        links=None,
+        inputs=None,
+        placeholders=None,
+        dialogs=None,
+        articles=None,
+        listitems=None,
+        tabs=None,
+        videos=None,
+        images=None,
+    ):
         self.url = "https://labs.google/fx/ar/tools/flow"
         self.frames = []
         self.buttons = [FakeItem(text=value) for value in (buttons or [])]
         self.links = [FakeItem(text=value) for value in (links or [])]
         self.inputs = inputs or []
         self.placeholders = [FakeItem(attrs={"placeholder": value}) for value in (placeholders or [])]
+        self.dialogs = dialogs or []
+        self.articles = articles or []
+        self.listitems = listitems or []
+        self.tabs = [FakeItem(text=value) for value in (tabs or [])]
+        self.videos = videos or []
+        self.images = images or []
         self.waits = 0
 
     def title(self):
         return "Google Flow"
 
+    def goto(self, url, wait_until=None, timeout=None):
+        self.url = url
+
     def wait_for_timeout(self, _ms):
         self.waits += 1
 
     def get_by_role(self, role, name=None):
-        items = {"button": self.buttons, "link": self.links, "textbox": self.inputs}.get(role, [])
+        items = {
+            "button": self.buttons,
+            "link": self.links,
+            "textbox": self.inputs,
+            "dialog": self.dialogs,
+            "article": self.articles,
+            "listitem": self.listitems,
+            "tab": self.tabs,
+            "group": [],
+        }.get(role, [])
         if name is None:
             return FakeLocator(items)
         filtered = []
@@ -295,6 +335,10 @@ class FakeFlowPage:
     def locator(self, selector):
         if selector == "body":
             return FakeItem(text="")
+        if selector == "video":
+            return FakeLocator(self.videos)
+        if selector == "img":
+            return FakeLocator(self.images)
         if "placeholder" in selector:
             return FakeLocator(self.placeholders)
         if "aria-label" in selector:
@@ -306,8 +350,126 @@ class FakeFlowPage:
     def get_by_text(self, _text, exact=False):
         return FakeLocator([])
 
+    def screenshot(self, path, full_page=True):
+        Path(path).write_bytes(b"safe screenshot")
+
 
 class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
+    def _browser(self, base_dir=None):
+        return GoogleFlowBrowser(
+            FlowWorkerConfig(
+                base_dir=base_dir or Path(tempfile.gettempdir()) / "pingoo-test"
+            )
+        )
+
+    def test_arabic_and_english_landing_states(self):
+        browser = self._browser()
+        for label in ("مشروع جديد", "New project"):
+            with self.subTest(label=label):
+                self.assertEqual(
+                    browser.detect_flow_state(FakeFlowPage(buttons=[label])),
+                    "LANDING",
+                )
+
+    def test_existing_project_card_is_discovered(self):
+        browser = self._browser()
+        edit = FakeItem(text="تعديل المشروع")
+        card = FakeItem(
+            text="مشروع فيديو",
+            children={"button": [edit]},
+        )
+        page = FakeFlowPage(articles=[card])
+
+        self.assertEqual(browser.detect_flow_state(page), "PROJECT_LIST")
+        self.assertIs(browser._find_project_card_action(page), edit)
+
+    def test_project_workspace_state_without_url_change(self):
+        browser = self._browser()
+        page = FakeFlowPage(buttons=["إعدادات المشروع"])
+        original_url = page.url
+
+        self.assertEqual(browser.detect_flow_state(page), "PROJECT_WORKSPACE")
+        self.assertEqual(page.url, original_url)
+
+    def test_create_dialog_state(self):
+        browser = self._browser()
+        page = FakeFlowPage(dialogs=[FakeItem(text="إنشاء مشروع")])
+
+        self.assertEqual(browser.detect_flow_state(page), "CREATE_DIALOG")
+
+    def test_main_frame_composer_state(self):
+        browser = self._browser()
+        page = FakeFlowPage(inputs=[FakeItem(text="وصف")], buttons=["إنشاء"])
+
+        self.assertEqual(browser.detect_flow_state(page), "VIDEO_COMPOSER")
+
+    def test_iframe_composer_state(self):
+        browser = self._browser()
+        main = FakeFlowPage()
+        frame = FakeFlowPage(inputs=[FakeItem(text="Describe")], buttons=["Generate"])
+        main.frames = [frame]
+
+        self.assertEqual(browser.detect_flow_state(main), "VIDEO_COMPOSER")
+
+    def test_generating_and_result_ready_states(self):
+        browser = self._browser()
+        generating = FakeFlowPage(buttons=["إلغاء التوليد"])
+        ready = FakeFlowPage(buttons=["تنزيل"], videos=[FakeItem()])
+
+        self.assertEqual(browser.detect_flow_state(generating), "GENERATING")
+        self.assertEqual(browser.detect_flow_state(ready), "RESULT_READY")
+
+    def test_image_result_with_download_is_result_ready(self):
+        browser = self._browser()
+        ready = FakeFlowPage(buttons=["Download"], images=[FakeItem()])
+
+        self.assertEqual(browser.detect_flow_state(ready), "RESULT_READY")
+
+    def test_video_mode_is_selected_when_composer_is_generic(self):
+        browser = self._browser()
+        video = FakeItem(text="Video", attrs={"aria-selected": "false"})
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")], buttons=["Generate"])
+        page.tabs = [video]
+
+        browser._select_video_mode_if_needed(page)
+
+        self.assertTrue(video.clicked)
+
+    def test_unknown_failure_writes_snapshot_trace_and_keeps_five_screenshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            browser = self._browser(Path(tmp))
+            page = FakeFlowPage()
+            for index in range(7):
+                browser._record_ui_failure(page, [], f"unknown-{index}")
+                time.sleep(0.01)
+
+            screenshots = list(browser.config.diagnostics_dir.glob("flow-failure-*.png"))
+            snapshot = browser.config.diagnostics_dir / "flow-last-snapshot.json"
+            trace = browser.config.base_dir / "flow-last-trace.json"
+
+            self.assertEqual(len(screenshots), 5)
+            self.assertTrue(snapshot.exists())
+            self.assertTrue(trace.exists())
+            self.assertNotIn("cookies", snapshot.read_text(encoding="utf-8").lower())
+
+    def test_safe_snapshot_contains_required_counts(self):
+        browser = self._browser()
+        page = FakeFlowPage(
+            buttons=["Generate"],
+            links=["Help"],
+            inputs=[FakeItem(text="Prompt")],
+            placeholders=["Describe video"],
+            videos=[FakeItem()],
+            images=[FakeItem()],
+        )
+
+        snapshot = browser.collect_safe_ui_snapshot(page)
+
+        self.assertEqual(snapshot["video_elements_count"], 1)
+        self.assertEqual(snapshot["image_elements_count"], 1)
+        self.assertIn("role_names", snapshot)
+        self.assertNotIn("html", snapshot)
+
     def test_arabic_and_english_generate_action_fallback(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
         for label in ("Generate", "إنشاء"):
@@ -406,7 +568,7 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         navigation = browser._ensure_prompt_workspace(page)
 
         self.assertTrue(cta.clicked)
-        self.assertEqual(navigation, "existing")
+        self.assertEqual(navigation, "new")
         self.assertIs(browser._first_prompt_input(page), prompt)
 
     def test_precise_prompt_input_error_code(self):
@@ -422,10 +584,10 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
         page = FakeFlowPage(buttons=["مشروع جديد"])
 
-        with self.assertRaises(FlowWorkspaceLoadChanged) as raised:
+        with self.assertRaises(FlowProjectNavigationFailed) as raised:
             browser._ensure_prompt_workspace(page)
 
-        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_WORKSPACE_LOAD")
+        self.assertEqual(raised.exception.code, "FLOW_PROJECT_NAVIGATION_FAILED")
 
     def test_precise_generate_button_error_code(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
@@ -477,15 +639,90 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         import inspect
 
         source = inspect.getsource(GoogleFlowBrowser.workspace_probe)
+        dry_run_source = inspect.getsource(GoogleFlowBrowser.dry_run)
+        submit_source = inspect.getsource(GoogleFlowBrowser._submit_prompt)
 
-        self.assertIn("_ensure_prompt_workspace", source)
-        self.assertIn("_first_prompt_input_with_frame", source)
-        self.assertIn("_find_generate_action", source)
+        self.assertIn("dry_run", source)
+        self.assertIn("_prepare_generation_surface", dry_run_source)
+        self.assertIn("_prepare_generation_surface", submit_source)
         self.assertNotIn("_submit_prompt", source)
-        self.assertNotIn("fill(", source)
-        self.assertNotIn("FLOW_PROMPT_SUBMITTED", source)
+        self.assertNotIn("fill(", dry_run_source)
+        self.assertNotIn("click(", dry_run_source)
+        self.assertNotIn("FLOW_PROMPT_SUBMITTED", dry_run_source)
+
+    def test_dry_run_endpoint_returns_no_credit_result(self):
+        expected = {
+            "authenticated": True,
+            "initial_state": "PROJECT_LIST",
+            "workspace_state": "VIDEO_COMPOSER",
+            "project_navigation": "existing",
+            "prompt_input_found": True,
+            "prompt_frame": "frame_1",
+            "generate_action_found": True,
+            "credit_consumed": False,
+            "ready_for_generation": True,
+            "error_code": None,
+        }
+        with patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls:
+            browser_cls.return_value.dry_run.return_value = expected
+
+            result = flow_dry_run()
+
+        self.assertEqual(result, expected)
+        self.assertFalse(result["credit_consumed"])
+
+    def test_real_dry_run_path_stops_before_fill_or_generate_click(self):
+        browser = self._browser()
+        prompt = FakeItem(text="Describe your video")
+        generate = FakeItem(text="Generate")
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [generate]
+
+        class Context:
+            pages = [page]
+
+            def close(self):
+                pass
+
+        class Chromium:
+            def launch_persistent_context(self, **_kwargs):
+                return Context()
+
+        class Playwright:
+            chromium = Chromium()
+
+        class Manager:
+            def __enter__(self):
+                return Playwright()
+
+            def __exit__(self, *_args):
+                pass
+
+        with patch(
+            "tools.google_flow_worker.flow_browser.sync_playwright",
+            return_value=Manager(),
+        ):
+            result = browser.dry_run()
+
+        self.assertTrue(result["ready_for_generation"])
+        self.assertFalse(result["credit_consumed"])
+        self.assertEqual(prompt.filled, "")
+        self.assertFalse(generate.clicked)
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
+    def test_startup_script_registers_logon_restart_and_private_network_values(self):
+        script = Path("tools/google_flow_worker/windows_register_startup.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("New-ScheduledTaskTrigger -AtLogOn", script)
+        self.assertIn("-RestartCount", script)
+        self.assertIn("100.123.55.125", script)
+        self.assertIn("100.104.63.125:18080/api/v1/video_materials", script)
+        self.assertIn('-Headless `"false`"', script)
+        self.assertNotIn("password", script.lower())
+        self.assertNotIn("token", script.lower())
+
     @patch.dict("os.environ", {"LOCALAPPDATA": r"C:\Users\me\AppData\Local"}, clear=True)
     @patch("platform.system", return_value="Windows")
     def test_windows_defaults_use_dedicated_profile(self, _system):
@@ -493,6 +730,7 @@ class GoogleFlowWorkerWindowsTest(unittest.TestCase):
 
         self.assertIn("PingooGoogleFlow", str(config.base_dir))
         self.assertEqual(config.profile_dir.name, "profile")
+        self.assertEqual(config.diagnostics_dir.name, "diagnostics")
         self.assertEqual(config.host, "127.0.0.1")
         self.assertFalse(config.headless)
 
