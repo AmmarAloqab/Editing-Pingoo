@@ -12,8 +12,11 @@ from .config import FlowWorkerConfig, ensure_runtime_dirs
 from .errors import (
     FlowAuthRequired,
     FlowDownloadFailed,
+    FlowGenerateButtonChanged,
     FlowGenerationFailed,
     FlowGenerationTimeout,
+    FlowProjectCreateChanged,
+    FlowPromptInputChanged,
     FlowUiChanged,
 )
 from .windows_chrome import find_chrome_executable
@@ -164,13 +167,14 @@ class GoogleFlowBrowser:
                 page.goto(self.config.flow_url, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(2000)
                 return self._page_diagnostics(page)
-        except Exception:
+        except Exception as exc:
             return {
                 "url": self._safe_url(page),
                 "title": self._safe_title(page),
                 "has_google_account_button": False,
                 "has_sign_in": False,
                 "detected_flow_controls": [],
+                "error_code": self._status_error_code(exc),
             }
         finally:
             if context:
@@ -179,10 +183,32 @@ class GoogleFlowBrowser:
                 except Exception:
                     pass
 
+    def ui_inventory(self) -> dict:
+        context = None
+        page = None
+        try:
+            with sync_playwright() as playwright:
+                context = playwright.chromium.launch_persistent_context(**self._context_kwargs())
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(self.config.flow_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+                return self._safe_ui_inventory(page)
+        except Exception as exc:
+            inventory = self._safe_ui_inventory(page) if page else {}
+            inventory["error_code"] = self._status_error_code(exc)
+            return inventory
+        finally:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
     def _page_diagnostics(self, page) -> dict:
-        buttons = self._visible_role_texts(page, "button")
-        links = self._visible_role_texts(page, "link")
-        aria_labels = self._aria_labels(page)
+        inventory = self._safe_ui_inventory(page)
+        buttons = inventory.get("buttons", [])
+        links = inventory.get("links", [])
+        aria_labels = inventory.get("aria_labels", [])
         control_names = buttons + links + aria_labels
         detected_controls = []
         for value in control_names:
@@ -197,7 +223,164 @@ class GoogleFlowBrowser:
             "has_google_account_button": self._has_google_account_button(page, aria_labels),
             "has_sign_in": self._has_sign_in(page, buttons, links),
             "detected_flow_controls": detected_controls,
+            "visible_input_count": inventory.get("visible_input_count", 0),
+            "button_labels_safe": buttons[:30],
+            "link_labels_safe": links[:30],
+            "placeholders_safe": inventory.get("placeholders", [])[:30],
+            "aria_labels_safe": aria_labels[:40],
+            "contenteditable_count": inventory.get("contenteditable_count", 0),
+            "frame_count": inventory.get("frame_count", 0),
         }
+
+    def _safe_ui_inventory(self, page) -> dict:
+        if not page:
+            return {
+                "url": "",
+                "title": "",
+                "buttons": [],
+                "links": [],
+                "textboxes": [],
+                "placeholders": [],
+                "aria_labels": [],
+                "visible_input_count": 0,
+                "contenteditable_count": 0,
+                "frame_count": 0,
+            }
+        frames = self._candidate_frames(page)
+        buttons = self._visible_role_texts_all(frames, "button")
+        links = self._visible_role_texts_all(frames, "link")
+        textboxes = self._visible_role_texts_all(frames, "textbox")
+        return {
+            "url": self._safe_url(page),
+            "title": self._safe_title(page),
+            "buttons": buttons[:40],
+            "links": links[:40],
+            "textboxes": textboxes[:30],
+            "placeholders": self._visible_attributes_all(frames, "[placeholder]", "placeholder")[:40],
+            "aria_labels": self._visible_attributes_all(frames, "[aria-label]", "aria-label")[:80],
+            "visible_input_count": self._visible_locator_count_all(frames, "textarea, input, [contenteditable='true'], [role='textbox']"),
+            "contenteditable_count": self._visible_locator_count_all(frames, "[contenteditable='true']"),
+            "frame_count": max(0, len(frames) - 1),
+        }
+
+    def _candidate_frames(self, page) -> list:
+        frames = [page]
+        try:
+            frames.extend([frame for frame in page.frames if frame not in frames])
+        except Exception:
+            pass
+        return frames
+
+    def _visible_role_texts_all(self, frames: list, role: str, limit: int = 80) -> list[str]:
+        values = []
+        for frame in frames:
+            for value in self._visible_role_texts(frame, role, limit=limit):
+                if value and value not in values:
+                    values.append(value)
+                if len(values) >= limit:
+                    return values
+        return values
+
+    def _visible_attributes_all(self, frames: list, selector: str, attribute: str, limit: int = 80) -> list[str]:
+        values = []
+        for frame in frames:
+            try:
+                locator = frame.locator(selector)
+                count = min(locator.count(), limit)
+                for index in range(count):
+                    try:
+                        item = locator.nth(index)
+                        if hasattr(item, "is_visible") and not item.is_visible(timeout=500):
+                            continue
+                        value = item.get_attribute(attribute, timeout=500)
+                        if value and value not in values:
+                            values.append(value)
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+            if len(values) >= limit:
+                break
+        return values[:limit]
+
+    def _visible_locator_count_all(self, frames: list, selector: str) -> int:
+        total = 0
+        for frame in frames:
+            try:
+                locator = frame.locator(selector)
+                count = locator.count()
+                for index in range(count):
+                    try:
+                        item = locator.nth(index)
+                        if not hasattr(item, "is_visible") or item.is_visible(timeout=500):
+                            total += 1
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return total
+
+    def _first_visible_locator(self, frames: list, selector: str):
+        for frame in frames:
+            try:
+                locator = frame.locator(selector)
+                count = locator.count()
+                for index in range(count):
+                    item = locator.nth(index)
+                    try:
+                        if not hasattr(item, "is_visible") or item.is_visible(timeout=1000):
+                            return item
+                    except Exception:
+                        return item
+            except Exception:
+                continue
+        return None
+
+    def _first_prompt_input(self, page):
+        frames = self._candidate_frames(page)
+        role_names = re.compile(
+            r"prompt|describe|create|generate|اكتب|أدخل|ادخل|وصف|الفكرة|النص|المطالبة|أنشئ|انشئ|توليد",
+            re.I,
+        )
+        for frame in frames:
+            try:
+                candidate = frame.get_by_role("textbox", name=role_names).first
+                if candidate.count() and candidate.is_visible(timeout=1000):
+                    return candidate
+            except Exception:
+                continue
+        return self._first_visible_locator(
+            frames,
+            "textarea, [contenteditable='true'], [role='textbox']",
+        )
+
+    def _click_named_action(self, page, pattern: re.Pattern, timeout: int = 3000) -> bool:
+        for frame in self._candidate_frames(page):
+            for role in ("button", "link"):
+                try:
+                    item = frame.get_by_role(role, name=pattern).first
+                    if item.count() and item.is_visible(timeout=1000):
+                        item.click(timeout=timeout)
+                        page.wait_for_timeout(1500)
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _ensure_prompt_workspace(self, page) -> None:
+        if self._first_prompt_input(page) is not None:
+            return
+        landing_or_project_action = re.compile(
+            r"new project|create project|start creating|try flow|open flow|launch|start|create|generate|"
+            r"مشروع جديد|إنشاء مشروع|انشاء مشروع|ابدأ|ابدأ الآن|جرّب|جرب|افتح|إنشاء|انشاء|توليد",
+            re.I,
+        )
+        for _ in range(3):
+            if not self._click_named_action(page, landing_or_project_action, timeout=5000):
+                break
+            if self._first_prompt_input(page) is not None:
+                return
+        raise FlowProjectCreateChanged("Could not open Flow prompt workspace")
 
     def _visible_role_texts(self, page, role: str, limit: int = 40) -> list[str]:
         values = []
@@ -323,18 +506,21 @@ class GoogleFlowBrowser:
                 context.close()
 
     def _submit_prompt(self, page, prompt: str, aspect_ratio: str, media_type: str, log_event=None) -> None:
+        self._ensure_prompt_workspace(page)
+        prompt_box = self._first_prompt_input(page)
+        if prompt_box is None:
+            raise FlowPromptInputChanged("Could not find Flow prompt input")
         try:
-            prompt_box = page.get_by_role("textbox").first
             prompt_box.fill(prompt, timeout=30000)
-        except PlaywrightTimeoutError as exc:
-            raise FlowUiChanged("Could not find Flow prompt textbox") from exc
+        except Exception as exc:
+            raise FlowPromptInputChanged("Could not fill Flow prompt input") from exc
 
-        for label in (media_type, "Video", "Generate video"):
-            try:
-                page.get_by_text(label, exact=False).first.click(timeout=3000)
-                break
-            except Exception:
-                continue
+        if media_type:
+            mode_pattern = re.compile(
+                r"video|generate video|فيديو|إنشاء فيديو|انشاء فيديو|توليد فيديو",
+                re.I,
+            )
+            self._click_named_action(page, mode_pattern, timeout=3000)
 
         if aspect_ratio:
             try:
@@ -342,15 +528,16 @@ class GoogleFlowBrowser:
             except Exception:
                 pass
 
-        for button_name in ("Generate", "Create", "Submit"):
-            try:
-                page.get_by_role("button", name=button_name).click(timeout=5000)
-                if log_event:
-                    log_event("FLOW_PROMPT_SUBMITTED")
-                return
-            except Exception:
-                continue
-        raise FlowUiChanged("Could not find Flow generate button")
+        generate_pattern = re.compile(
+            r"^generate$|generate video|^create$|^submit$|^send$|"
+            r"توليد|إنشاء|انشاء|إرسال|ارسل|أنشئ|انشئ",
+            re.I,
+        )
+        if self._click_named_action(page, generate_pattern, timeout=5000):
+            if log_event:
+                log_event("FLOW_PROMPT_SUBMITTED")
+            return
+        raise FlowGenerateButtonChanged("Could not find Flow generate action")
 
     def _wait_for_download(self, page, scene_id: int, timeout_ms: int, log_event=None) -> Path:
         deadline = time.monotonic() + (timeout_ms / 1000)
@@ -386,8 +573,13 @@ class GoogleFlowBrowser:
         timestamp = int(time.time())
         safe_prefix = "".join(ch for ch in prefix if ch.isalnum() or ch in "-_")
         try:
+            inventory = self._safe_ui_inventory(page)
             (self.config.logs_dir / f"{safe_prefix}-{timestamp}.txt").write_text(
-                f"title={page.title()}\nurl={page.url}\n",
+                "FLOW_UI_STEP=unknown\n"
+                f"CURRENT_URL={inventory.get('url', '')}\n"
+                f"PAGE_TITLE={inventory.get('title', '')}\n"
+                f"VISIBLE_INPUT_COUNT={inventory.get('visible_input_count', 0)}\n"
+                f"VISIBLE_BUTTON_LABELS_SAFE={inventory.get('buttons', [])[:20]}\n",
                 encoding="utf-8",
             )
         except Exception:

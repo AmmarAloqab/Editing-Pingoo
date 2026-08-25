@@ -148,6 +148,11 @@ def flow_diagnostics():
     return GoogleFlowBrowser(config).diagnostics()
 
 
+@app.get("/flow/ui-inventory")
+def flow_ui_inventory():
+    return GoogleFlowBrowser(config).ui_inventory()
+
+
 @app.post("/flow/generate")
 def flow_generate(request: FlowGenerateRequest):
     job_id = uuid4().hex

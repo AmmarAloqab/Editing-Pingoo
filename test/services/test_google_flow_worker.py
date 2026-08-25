@@ -6,13 +6,13 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.google_flow_worker.config import FlowWorkerConfig
-from tools.google_flow_worker.errors import FlowAuthRequired, PingooUploadFailed
+from tools.google_flow_worker.errors import FlowAuthRequired, FlowGenerateButtonChanged, FlowProjectCreateChanged, FlowPromptInputChanged, PingooUploadFailed
 from tools.google_flow_worker.flow_browser import GoogleFlowBrowser
 from tools.google_flow_worker.planner import (
     build_flow_prompt,
     select_auto_flow_candidates,
 )
-from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate, flow_job_status
+from tools.google_flow_worker.worker import FlowGenerateRequest, flow_diagnostics, flow_generate, flow_job_status, flow_ui_inventory
 from tools.google_flow_worker.config import get_config
 
 
@@ -188,6 +188,184 @@ class GoogleFlowWorkerEndpointTest(unittest.TestCase):
 
         self.assertEqual(result, expected)
 
+
+
+class FakeItem:
+    def __init__(self, text="", visible=True, attrs=None):
+        self.text = text
+        self.visible = visible
+        self.attrs = attrs or {}
+        self.clicked = False
+        self.filled = ""
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def nth(self, _index):
+        return self
+
+    def is_visible(self, timeout=None):
+        return self.visible
+
+    def inner_text(self, timeout=None):
+        return self.text
+
+    def get_attribute(self, name, timeout=None):
+        return self.attrs.get(name)
+
+    def click(self, timeout=None):
+        self.clicked = True
+
+    def fill(self, value, timeout=None):
+        self.filled = value
+
+
+class FakeLocator:
+    def __init__(self, items=None):
+        self.items = items or []
+
+    @property
+    def first(self):
+        return self.items[0] if self.items else EmptyLocator()
+
+    def count(self):
+        return len(self.items)
+
+    def nth(self, index):
+        return self.items[index]
+
+
+class EmptyLocator(FakeItem):
+    def __init__(self):
+        super().__init__(visible=False)
+
+    def count(self):
+        return 0
+
+
+class FakeFlowPage:
+    def __init__(self, *, buttons=None, links=None, inputs=None, placeholders=None):
+        self.url = "https://labs.google/fx/ar/tools/flow"
+        self.frames = []
+        self.buttons = [FakeItem(text=value) for value in (buttons or [])]
+        self.links = [FakeItem(text=value) for value in (links or [])]
+        self.inputs = inputs or []
+        self.placeholders = [FakeItem(attrs={"placeholder": value}) for value in (placeholders or [])]
+        self.waits = 0
+
+    def title(self):
+        return "Google Flow"
+
+    def wait_for_timeout(self, _ms):
+        self.waits += 1
+
+    def get_by_role(self, role, name=None):
+        items = {"button": self.buttons, "link": self.links, "textbox": self.inputs}.get(role, [])
+        if name is None:
+            return FakeLocator(items)
+        filtered = []
+        for item in items:
+            if hasattr(name, "search") and name.search(item.text):
+                filtered.append(item)
+            elif str(name).lower() in item.text.lower():
+                filtered.append(item)
+        return FakeLocator(filtered)
+
+    def locator(self, selector):
+        if selector == "body":
+            return FakeItem(text="")
+        if "placeholder" in selector:
+            return FakeLocator(self.placeholders)
+        if "aria-label" in selector:
+            return FakeLocator([])
+        if "textarea" in selector or "contenteditable" in selector or "role='textbox'" in selector:
+            return FakeLocator(self.inputs)
+        return FakeLocator([])
+
+    def get_by_text(self, _text, exact=False):
+        return FakeLocator([])
+
+
+class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
+    def test_arabic_and_english_generate_action_fallback(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        for label in ("Generate", "إنشاء"):
+            with self.subTest(label=label):
+                button = FakeItem(text=label)
+                page = FakeFlowPage(buttons=[label], inputs=[FakeItem(text="prompt")])
+                page.buttons = [button]
+                browser._submit_prompt(page, "hello", "9:16", "video")
+                self.assertTrue(button.clicked)
+                self.assertEqual(page.inputs[0].filled, "hello")
+
+    def test_prompt_input_detection_uses_textbox_or_semantic_input(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        prompt = FakeItem(text="اكتب وصف الفيديو")
+        page = FakeFlowPage(inputs=[prompt])
+
+        self.assertIs(browser._first_prompt_input(page), prompt)
+
+    def test_project_navigation_clicks_landing_cta_before_prompt(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        cta = FakeItem(text="ابدأ الآن")
+        prompt = FakeItem(text="prompt", visible=False)
+        page = FakeFlowPage(buttons=["ابدأ الآن"], inputs=[prompt])
+        page.buttons = [cta]
+
+        def reveal(_timeout=None):
+            return prompt.visible
+
+        original_click = cta.click
+        def click_and_reveal(timeout=None):
+            original_click(timeout=timeout)
+            prompt.visible = True
+        cta.click = click_and_reveal
+
+        browser._ensure_prompt_workspace(page)
+
+        self.assertTrue(cta.clicked)
+        self.assertIs(browser._first_prompt_input(page), prompt)
+
+    def test_precise_prompt_input_error_code(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        page = FakeFlowPage(buttons=[])
+
+        with self.assertRaises(FlowProjectCreateChanged) as raised:
+            browser._ensure_prompt_workspace(page)
+
+        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_PROJECT_CREATE")
+
+    def test_precise_generate_button_error_code(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        page = FakeFlowPage(inputs=[FakeItem(text="prompt")])
+
+        with self.assertRaises(FlowGenerateButtonChanged) as raised:
+            browser._submit_prompt(page, "hello", "9:16", "video")
+
+        self.assertEqual(raised.exception.code, "FLOW_UI_CHANGED_GENERATE_BUTTON")
+
+    def test_ui_inventory_endpoint_returns_safe_structure(self):
+        expected = {
+            "url": "https://labs.google/fx/ar/tools/flow",
+            "title": "Google Flow",
+            "buttons": ["إنشاء"],
+            "links": [],
+            "textboxes": [],
+            "placeholders": [],
+            "aria_labels": [],
+            "visible_input_count": 0,
+            "contenteditable_count": 0,
+            "frame_count": 0,
+        }
+        with patch("tools.google_flow_worker.worker.GoogleFlowBrowser") as browser_cls:
+            browser_cls.return_value.ui_inventory.return_value = expected
+            result = flow_ui_inventory()
+
+        self.assertEqual(result, expected)
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
     @patch.dict("os.environ", {"LOCALAPPDATA": r"C:\Users\me\AppData\Local"}, clear=True)

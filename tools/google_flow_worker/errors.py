@@ -10,6 +10,18 @@ class FlowUiChanged(FlowWorkerError):
     code = "FLOW_UI_CHANGED"
 
 
+class FlowProjectCreateChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_PROJECT_CREATE"
+
+
+class FlowPromptInputChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_PROMPT_INPUT"
+
+
+class FlowGenerateButtonChanged(FlowUiChanged):
+    code = "FLOW_UI_CHANGED_GENERATE_BUTTON"
+
+
 class FlowGenerationFailed(FlowWorkerError):
     code = "FLOW_GENERATION_FAILED"
 
