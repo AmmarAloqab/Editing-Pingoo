@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from tools.google_flow_worker.config import FlowWorkerConfig
 from tools.google_flow_worker.errors import (
     FlowAuthRequired,
+    FlowBlockedEmptyDom,
     FlowGenerateActionChanged,
     FlowProjectNavigationFailed,
     FlowProjectNavigationChanged,
@@ -287,6 +288,7 @@ class FakeFlowPage:
         tabs=None,
         videos=None,
         images=None,
+        title_value="Google Flow",
     ):
         self.url = "https://labs.google/fx/ar/tools/flow"
         self.frames = []
@@ -300,10 +302,11 @@ class FakeFlowPage:
         self.tabs = [FakeItem(text=value) for value in (tabs or [])]
         self.videos = videos or []
         self.images = images or []
+        self.title_value = title_value
         self.waits = 0
 
     def title(self):
-        return "Google Flow"
+        return self.title_value
 
     def goto(self, url, wait_until=None, timeout=None):
         self.url = url
@@ -370,6 +373,73 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
                     browser.detect_flow_state(FakeFlowPage(buttons=[label])),
                     "LANDING",
                 )
+
+    def test_empty_dom_with_recaptcha_blocks_navigation_and_returns_diagnostics(self):
+        browser = self._browser()
+        page = FakeFlowPage(title_value="")
+        recaptcha = FakeFlowPage(title_value="")
+        recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
+        page.frames = [recaptcha]
+        trace = []
+
+        with (
+            patch.object(browser, "_open_existing_project") as open_existing,
+            patch.object(browser, "_open_new_project") as open_new,
+            self.assertRaises(FlowBlockedEmptyDom) as raised,
+        ):
+            browser.ensure_flow_workspace(page, trace=trace)
+
+        diagnostics = browser._dom_readiness_diagnostics(page)
+        self.assertEqual(raised.exception.code, "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertEqual(diagnostics["url"], "https://labs.google/fx/ar/tools/flow")
+        self.assertEqual(diagnostics["title"], "")
+        self.assertEqual(diagnostics["iframe_count"], 1)
+        self.assertTrue(diagnostics["recaptcha_detected"])
+        self.assertEqual(diagnostics["state"], "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertEqual(diagnostics["error_code"], "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertEqual(trace[0]["step"], "validate_dom_readiness")
+        open_existing.assert_not_called()
+        open_new.assert_not_called()
+
+    def test_empty_dom_state_requires_empty_title_and_zero_core_controls(self):
+        browser = self._browser()
+
+        self.assertEqual(
+            browser.detect_flow_state(FakeFlowPage(title_value="")),
+            "FLOW_BLOCKED_EMPTY_DOM",
+        )
+        self.assertNotEqual(
+            browser.detect_flow_state(FakeFlowPage(title_value="", buttons=["New project"])),
+            "FLOW_BLOCKED_EMPTY_DOM",
+        )
+
+    def test_diagnostics_endpoint_payload_includes_empty_dom_evidence(self):
+        browser = self._browser()
+        page = FakeFlowPage(title_value="")
+        recaptcha = FakeFlowPage(title_value="")
+        recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
+        page.frames = [recaptcha]
+
+        diagnostics = browser._page_diagnostics(page)
+
+        self.assertEqual(
+            {key: diagnostics[key] for key in (
+                "url",
+                "title",
+                "iframe_count",
+                "recaptcha_detected",
+                "state",
+                "error_code",
+            )},
+            {
+                "url": "https://labs.google/fx/ar/tools/flow",
+                "title": "",
+                "iframe_count": 1,
+                "recaptcha_detected": True,
+                "state": "FLOW_BLOCKED_EMPTY_DOM",
+                "error_code": "FLOW_BLOCKED_EMPTY_DOM",
+            },
+        )
 
     def test_existing_project_card_is_discovered(self):
         browser = self._browser()
@@ -619,6 +689,11 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
 
     def test_workspace_probe_endpoint_returns_safe_structure(self):
         expected = {
+            "url": "https://labs.google/fx/ar/tools/flow/project/123",
+            "title": "Google Flow",
+            "iframe_count": 0,
+            "recaptcha_detected": False,
+            "state": "VIDEO_COMPOSER",
             "workspace_ready": True,
             "workspace_url": "https://labs.google/fx/ar/tools/flow/project/123",
             "workspace_title": "Google Flow",
@@ -634,6 +709,26 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
             result = flow_workspace_probe()
 
         self.assertEqual(result, expected)
+
+    def test_workspace_probe_preserves_empty_dom_diagnostics(self):
+        browser = self._browser()
+        blocked = {
+            **browser._dry_run_result(),
+            "url": "https://labs.google/fx/ar/tools/flow",
+            "title": "",
+            "iframe_count": 1,
+            "recaptcha_detected": True,
+            "state": "FLOW_BLOCKED_EMPTY_DOM",
+            "error_code": "FLOW_BLOCKED_EMPTY_DOM",
+        }
+
+        with patch.object(browser, "dry_run", return_value=blocked):
+            result = browser.workspace_probe()
+
+        self.assertFalse(result["workspace_ready"])
+        self.assertEqual(result["state"], "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertEqual(result["error_code"], "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertTrue(result["recaptcha_detected"])
 
     def test_workspace_probe_reuses_production_navigation_without_generation(self):
         import inspect
@@ -708,6 +803,47 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         self.assertFalse(result["credit_consumed"])
         self.assertEqual(prompt.filled, "")
         self.assertFalse(generate.clicked)
+
+    def test_dry_run_reports_empty_dom_without_workspace_ready(self):
+        browser = self._browser()
+        page = FakeFlowPage(title_value="")
+        recaptcha = FakeFlowPage(title_value="")
+        recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
+        page.frames = [recaptcha]
+
+        class Context:
+            pages = [page]
+
+            def close(self):
+                pass
+
+        class Chromium:
+            def launch_persistent_context(self, **_kwargs):
+                return Context()
+
+        class Playwright:
+            chromium = Chromium()
+
+        class Manager:
+            def __enter__(self):
+                return Playwright()
+
+            def __exit__(self, *_args):
+                pass
+
+        with patch(
+            "tools.google_flow_worker.flow_browser.sync_playwright",
+            return_value=Manager(),
+        ):
+            result = browser.dry_run()
+
+        self.assertFalse(result["ready_for_generation"])
+        self.assertEqual(result["url"], "https://labs.google/fx/tools/flow")
+        self.assertEqual(result["title"], "")
+        self.assertEqual(result["iframe_count"], 1)
+        self.assertTrue(result["recaptcha_detected"])
+        self.assertEqual(result["state"], "FLOW_BLOCKED_EMPTY_DOM")
+        self.assertEqual(result["error_code"], "FLOW_BLOCKED_EMPTY_DOM")
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
     def test_startup_script_registers_logon_restart_and_private_network_values(self):

@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 from .config import FlowWorkerConfig, ensure_runtime_dirs
 from .errors import (
     FlowAuthRequired,
+    FlowBlockedEmptyDom,
     FlowDownloadFailed,
     FlowGenerateActionChanged,
     FlowGenerateButtonChanged,
@@ -59,6 +60,7 @@ FLOW_AUTHENTICATED_CONTROLS = (
 
 FLOW_STATES = {
     "AUTH_REQUIRED",
+    "FLOW_BLOCKED_EMPTY_DOM",
     "LANDING",
     "PROJECT_LIST",
     "PROJECT_WORKSPACE",
@@ -170,6 +172,14 @@ class GoogleFlowBrowser:
         host = urlparse(url).netloc.lower()
         diagnostics = self._page_diagnostics(page)
 
+        if diagnostics.get("state") == "FLOW_BLOCKED_EMPTY_DOM":
+            return {
+                "authenticated": False,
+                "error_code": "FLOW_BLOCKED_EMPTY_DOM",
+                "page_title": title,
+                "current_url": url,
+            }
+
         if "accounts.google.com" in host:
             return {
                 "authenticated": False,
@@ -267,6 +277,11 @@ class GoogleFlowBrowser:
     def workspace_probe(self) -> dict:
         result = self.dry_run()
         return {
+            "url": result.get("url", result.get("workspace_url", "")),
+            "title": result.get("title", result.get("workspace_title", "")),
+            "iframe_count": result.get("iframe_count", 0),
+            "recaptcha_detected": result.get("recaptcha_detected", False),
+            "state": result.get("state", result.get("workspace_state", "UNKNOWN")),
             "workspace_ready": result.get("ready_for_generation", False),
             "workspace_url": result.get("workspace_url", ""),
             "workspace_title": result.get("workspace_title", ""),
@@ -290,6 +305,7 @@ class GoogleFlowBrowser:
                 page.wait_for_timeout(2000)
                 result["initial_state"] = self.detect_flow_state(page)
                 prepared = self._prepare_generation_surface(page, trace=trace)
+                diagnostics = self._dom_readiness_diagnostics(page)
                 result.update({key: value for key, value in prepared.items() if key not in {"prompt_input", "generate_action"}})
                 result.update(
                     {
@@ -298,6 +314,11 @@ class GoogleFlowBrowser:
                         "ready_for_generation": True,
                         "workspace_url": self._safe_url(page),
                         "workspace_title": self._safe_title(page),
+                        "url": self._safe_url(page),
+                        "title": self._safe_title(page),
+                        "iframe_count": diagnostics["iframe_count"],
+                        "recaptcha_detected": diagnostics["recaptcha_detected"],
+                        "state": diagnostics["state"],
                         "error_code": None,
                     }
                 )
@@ -332,6 +353,11 @@ class GoogleFlowBrowser:
             "workspace_state": "UNKNOWN",
             "workspace_url": "",
             "workspace_title": "",
+            "url": "",
+            "title": "",
+            "iframe_count": 0,
+            "recaptcha_detected": False,
+            "state": "UNKNOWN",
             "project_navigation": "not_needed",
             "prompt_input_found": False,
             "prompt_frame": "",
@@ -344,9 +370,15 @@ class GoogleFlowBrowser:
     def _probe_failure_fields(self, page) -> dict:
         if not page:
             return {}
+        diagnostics = self._dom_readiness_diagnostics(page)
         prompt, prompt_frame = self.find_prompt_input(page)
         generate_action, _frame = self.find_generate_action(page)
         return {
+            "url": diagnostics["url"],
+            "title": diagnostics["title"],
+            "iframe_count": diagnostics["iframe_count"],
+            "recaptcha_detected": diagnostics["recaptcha_detected"],
+            "state": diagnostics["state"],
             "workspace_state": self.detect_flow_state(page),
             "workspace_url": self._safe_url(page),
             "workspace_title": self._safe_title(page),
@@ -378,9 +410,14 @@ class GoogleFlowBrowser:
                 if marker in lowered and marker not in detected_controls:
                     detected_controls.append(marker)
 
+        blocked_empty_dom = self._is_empty_dom_snapshot(inventory)
         return {
             "url": self._safe_url(page),
             "title": self._safe_title(page),
+            "iframe_count": inventory.get("frame_count", 0),
+            "recaptcha_detected": bool(inventory.get("recaptcha_detected")),
+            "state": "FLOW_BLOCKED_EMPTY_DOM" if blocked_empty_dom else self.detect_flow_state(page),
+            "error_code": "FLOW_BLOCKED_EMPTY_DOM" if blocked_empty_dom else None,
             "has_google_account_button": self._has_google_account_button(page, aria_labels),
             "has_sign_in": self._has_sign_in(page, buttons, links),
             "detected_flow_controls": detected_controls,
@@ -411,6 +448,7 @@ class GoogleFlowBrowser:
                 "frame_count": 0,
                 "video_elements_count": 0,
                 "image_elements_count": 0,
+                "recaptcha_detected": False,
             }
         frames = self._candidate_frames(page)
         buttons = self._visible_role_texts_all(frames, "button")
@@ -420,10 +458,11 @@ class GoogleFlowBrowser:
             role: self._visible_role_texts_all(frames, role, limit=40)
             for role in ("button", "link", "textbox", "dialog", "article", "listitem", "tab")
         }
+        frame_urls = [self._safe_frame_url(frame) for frame in frames]
         return {
             "url": self._safe_url(page),
             "title": self._safe_title(page),
-            "frames": [self._safe_frame_url(frame) for frame in frames],
+            "frames": frame_urls,
             "buttons": buttons[:40],
             "links": links[:40],
             "textboxes": textboxes[:30],
@@ -436,6 +475,7 @@ class GoogleFlowBrowser:
             "frame_count": max(0, len(frames) - 1),
             "video_elements_count": self._visible_locator_count_all(frames, "video"),
             "image_elements_count": self._visible_locator_count_all(frames, "img"),
+            "recaptcha_detected": self._recaptcha_detected(frame_urls),
         }
 
     def _safe_ui_inventory(self, page) -> dict:
@@ -455,6 +495,8 @@ class GoogleFlowBrowser:
         if not page:
             return "UNKNOWN"
         snapshot = self.collect_safe_ui_snapshot(page)
+        if self._is_empty_dom_snapshot(snapshot):
+            return "FLOW_BLOCKED_EMPTY_DOM"
         url = snapshot.get("url", "")
         host = urlparse(url).netloc.lower()
         controls = self._snapshot_controls(snapshot)
@@ -494,6 +536,40 @@ class GoogleFlowBrowser:
             return "LANDING"
         return "UNKNOWN"
 
+    def _is_empty_dom_snapshot(self, snapshot: dict) -> bool:
+        return (
+            not str(snapshot.get("title") or "").strip()
+            and not snapshot.get("buttons")
+            and not snapshot.get("links")
+            and not snapshot.get("textboxes")
+        )
+
+    def _recaptcha_detected(self, frame_urls: list[str]) -> bool:
+        return any("recaptcha" in str(url).lower() for url in frame_urls)
+
+    def _dom_readiness_diagnostics(self, page) -> dict:
+        snapshot = self.collect_safe_ui_snapshot(page)
+        state = (
+            "FLOW_BLOCKED_EMPTY_DOM"
+            if self._is_empty_dom_snapshot(snapshot)
+            else self.detect_flow_state(page)
+        )
+        return {
+            "url": snapshot.get("url", ""),
+            "title": snapshot.get("title", ""),
+            "iframe_count": snapshot.get("frame_count", 0),
+            "recaptcha_detected": bool(snapshot.get("recaptcha_detected")),
+            "state": state,
+            "error_code": "FLOW_BLOCKED_EMPTY_DOM" if state == "FLOW_BLOCKED_EMPTY_DOM" else None,
+        }
+
+    def _validate_dom_readiness(self, page, trace: list[dict]) -> None:
+        diagnostics = self._dom_readiness_diagnostics(page)
+        trace.append({"step": "validate_dom_readiness", **diagnostics})
+        if diagnostics["state"] == "FLOW_BLOCKED_EMPTY_DOM":
+            self._record_ui_failure(page, trace, "empty-dom")
+            raise FlowBlockedEmptyDom("Flow DOM is empty; navigation blocked")
+
     def _snapshot_controls(self, snapshot: dict) -> str:
         values = []
         for key in ("buttons", "links", "textboxes", "placeholders", "aria_labels"):
@@ -516,7 +592,10 @@ class GoogleFlowBrowser:
         state = self.detect_flow_state(page)
         trace.append({"step": prefix, "state": state})
         self._write_safe_trace(trace)
-        if state == "UNKNOWN" or prefix in {"project-navigation", "workspace-load"}:
+        if state in {"UNKNOWN", "FLOW_BLOCKED_EMPTY_DOM"} or prefix in {
+            "project-navigation",
+            "workspace-load",
+        }:
             try:
                 snapshot = self.collect_safe_ui_snapshot(page)
                 (self.config.diagnostics_dir / "flow-last-snapshot.json").write_text(
@@ -780,6 +859,7 @@ class GoogleFlowBrowser:
 
     def ensure_flow_workspace(self, page, trace: list | None = None) -> tuple[str, str]:
         trace = trace if trace is not None else []
+        self._validate_dom_readiness(page, trace)
         state = self.detect_flow_state(page)
         trace.append({"step": "detect_initial_state", "state": state})
         if state == "AUTH_REQUIRED":

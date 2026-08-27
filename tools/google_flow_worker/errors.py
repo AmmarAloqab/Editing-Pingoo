@@ -10,6 +10,10 @@ class FlowUiChanged(FlowWorkerError):
     code = "FLOW_UI_CHANGED"
 
 
+class FlowBlockedEmptyDom(FlowUiChanged):
+    code = "FLOW_BLOCKED_EMPTY_DOM"
+
+
 class FlowProjectNavigationChanged(FlowUiChanged):
     code = "FLOW_UI_CHANGED_PROJECT_NAVIGATION"
 
