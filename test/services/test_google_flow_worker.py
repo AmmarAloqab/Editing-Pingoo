@@ -338,6 +338,16 @@ class FakeFlowPage:
     def locator(self, selector):
         if selector == "body":
             return FakeItem(text="")
+        if selector == "button":
+            return FakeLocator(self.buttons)
+        if selector == "[role='button']":
+            return FakeLocator(
+                [item for item in self.buttons if item.attrs.get("role") == "button"]
+            )
+        if selector == "button[type='submit']":
+            return FakeLocator(
+                [item for item in self.buttons if item.attrs.get("type") == "submit"]
+            )
         if selector == "video":
             return FakeLocator(self.videos)
         if selector == "img":
@@ -345,7 +355,33 @@ class FakeFlowPage:
         if "placeholder" in selector:
             return FakeLocator(self.placeholders)
         if "aria-label" in selector:
-            return FakeLocator([])
+            return FakeLocator(
+                [
+                    item
+                    for item in self.buttons + self.inputs
+                    if item.attrs.get("aria-label")
+                ]
+            )
+        if "title" in selector:
+            return FakeLocator(
+                [item for item in self.buttons + self.inputs if item.attrs.get("title")]
+            )
+        if "data-testid" in selector:
+            return FakeLocator(
+                [
+                    item
+                    for item in self.buttons + self.inputs
+                    if item.attrs.get("data-testid")
+                ]
+            )
+        if "data-test" in selector:
+            return FakeLocator(
+                [
+                    item
+                    for item in self.buttons + self.inputs
+                    if item.attrs.get("data-test")
+                ]
+            )
         if "textarea" in selector or "contenteditable" in selector or "role='textbox'" in selector:
             return FakeLocator(self.inputs)
         return FakeLocator([])
@@ -792,6 +828,63 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         self.assertIs(action, generate)
         self.assertEqual(frame_label, "main")
         self.assertFalse(generate.clicked)
+
+    def test_generate_action_detects_arabic_video_label(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        generate = FakeItem(text="إنشاء فيديو")
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [generate]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIs(action, generate)
+        self.assertEqual(frame_label, "main")
+
+    def test_generate_action_detects_icon_text_button(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        generate = FakeItem(text="arrow_forward\nإنشاء")
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [generate]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIs(action, generate)
+        self.assertEqual(frame_label, "main")
+
+    def test_generate_action_ignores_create_more_menu(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [FakeItem(text="more_vert\nإنشاء المزيد")]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIsNone(action)
+        self.assertEqual(frame_label, "")
+
+    def test_generate_action_detects_aria_label_fallback(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        generate = FakeItem(text="", attrs={"aria-label": "Create video"})
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [generate]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIs(action, generate)
+        self.assertEqual(frame_label, "main")
+
+    def test_generate_action_ignores_project_and_destructive_buttons(self):
+        browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))
+        page = FakeFlowPage(inputs=[FakeItem(text="Prompt")])
+        page.buttons = [
+            FakeItem(text="تعديل المشروع"),
+            FakeItem(text="حذف المشروع"),
+            FakeItem(text="مشروع جديد"),
+        ]
+
+        action, frame_label = browser._find_generate_action(page)
+
+        self.assertIsNone(action)
+        self.assertEqual(frame_label, "")
 
     def test_project_navigation_clicks_landing_cta_before_prompt(self):
         browser = GoogleFlowBrowser(FlowWorkerConfig(base_dir=Path(tempfile.gettempdir()) / "pingoo-test"))

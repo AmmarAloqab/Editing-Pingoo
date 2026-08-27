@@ -102,8 +102,16 @@ VIDEO_MODE_PATTERN = re.compile(
     re.I,
 )
 GENERATE_PATTERN = re.compile(
-    r"^generate$|generate video|^create$|^submit$|^send$|"
-    r"^توليد$|^إنشاء$|^انشاء$|إرسال|ارسل|أنشئ|انشئ",
+    r"^generate$|generate video|create video|submit prompt|^create$|^submit$|^send$|"
+    r"^توليد$|توليد الفيديو|توليد فيديو|^إنشاء$|إنشاء الفيديو|إنشاء فيديو|"
+    r"^انشاء$|انشاء الفيديو|انشاء فيديو|إرسال|ارسل|أرسل|أنشئ|انشئ|"
+    r"arrow_upward|arrow_forward|send|north",
+    re.I,
+)
+NON_GENERATE_ACTION_PATTERN = re.compile(
+    r"close|cancel|delete|edit project|new project|explore tools|download|export|help|"
+    r"إغلاق|اغلاق|إلغاء|الغاء|حذف|تعديل المشروع|مشروع جديد|إنشاء المزيد|"
+    r"تنزيل|تحميل|تصدير|مساعدة",
     re.I,
 )
 DOWNLOAD_PATTERN = re.compile(
@@ -836,6 +844,65 @@ class GoogleFlowBrowser:
                     continue
         return None, ""
 
+    def _locator_label(self, item) -> str:
+        values = []
+        try:
+            values.append(item.inner_text(timeout=500))
+        except Exception:
+            pass
+        for attribute in (
+            "aria-label",
+            "title",
+            "data-testid",
+            "data-test",
+            "data-tooltip",
+            "type",
+        ):
+            try:
+                values.append(item.get_attribute(attribute, timeout=500))
+            except Exception:
+                continue
+        return "\n".join(self._safe_control_label(value) for value in values if value)
+
+    def _visible_action_candidates(self, frame) -> list:
+        selectors = [
+            "button",
+            "[role='button']",
+            "button[type='submit']",
+            "[aria-label]",
+            "[title]",
+            "[data-testid]",
+            "[data-test]",
+        ]
+        candidates = []
+        seen = set()
+        for selector in selectors:
+            try:
+                locator = frame.locator(selector)
+                for index in range(min(locator.count(), 80)):
+                    try:
+                        item = locator.nth(index)
+                        key = id(item)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        if hasattr(item, "is_visible") and not item.is_visible(timeout=500):
+                            continue
+                        candidates.append(item)
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return candidates
+
+    def _is_generate_action_candidate(self, item) -> bool:
+        label = self._locator_label(item)
+        if not label:
+            return False
+        if NON_GENERATE_ACTION_PATTERN.search(label):
+            return False
+        return bool(GENERATE_PATTERN.search(label))
+
     def _click_named_action(self, page, pattern: re.Pattern, timeout: int = 3000) -> bool:
         item, _label = self._find_named_action(page, pattern)
         if item is None:
@@ -848,7 +915,14 @@ class GoogleFlowBrowser:
             return False
 
     def find_generate_action(self, page):
-        return self._find_named_action(page, GENERATE_PATTERN)
+        action, frame_label = self._find_named_action(page, GENERATE_PATTERN)
+        if action is not None:
+            return action, frame_label
+        for index, frame in enumerate(self._candidate_frames(page)):
+            for candidate in self._visible_action_candidates(frame):
+                if self._is_generate_action_candidate(candidate):
+                    return candidate, self._frame_label(index)
+        return None, ""
 
     def _find_generate_action(self, page):
         return self.find_generate_action(page)
