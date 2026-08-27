@@ -376,6 +376,8 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
 
     def test_empty_dom_with_recaptcha_blocks_navigation_and_returns_diagnostics(self):
         browser = self._browser()
+        browser.dom_hydration_timeout_ms = 1
+        browser.hydration_poll_interval_ms = 1
         page = FakeFlowPage(title_value="")
         recaptcha = FakeFlowPage(title_value="")
         recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
@@ -397,9 +399,86 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         self.assertTrue(diagnostics["recaptcha_detected"])
         self.assertEqual(diagnostics["state"], "FLOW_BLOCKED_EMPTY_DOM")
         self.assertEqual(diagnostics["error_code"], "FLOW_BLOCKED_EMPTY_DOM")
-        self.assertEqual(trace[0]["step"], "validate_dom_readiness")
+        self.assertEqual(trace[0]["step"], "workspace_hydration_start")
+        self.assertIn("workspace_hydration_timeout", [entry["step"] for entry in trace])
         open_existing.assert_not_called()
         open_new.assert_not_called()
+
+    def test_empty_dom_waits_for_spa_hydration_before_project_navigation(self):
+        browser = self._browser()
+        browser.dom_hydration_timeout_ms = 100
+        browser.workspace_hydration_timeout_ms = 100
+        browser.hydration_poll_interval_ms = 1
+        page = FakeFlowPage(title_value="")
+        recaptcha = FakeFlowPage(title_value="")
+        recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
+        page.frames = [recaptcha]
+        new = FakeItem(text="New project")
+        prompt = FakeItem(text="Describe your video", visible=False)
+        trace = []
+
+        def wait_and_hydrate(_ms):
+            page.waits += 1
+            if page.waits == 1:
+                page.title_value = "Google Flow"
+                page.buttons = [new]
+                page.inputs = [prompt]
+
+        def new_and_reveal(timeout=None):
+            new.clicked = True
+            prompt.visible = True
+
+        page.wait_for_timeout = wait_and_hydrate
+        new.click = new_and_reveal
+
+        navigation, state = browser.ensure_flow_workspace(page, trace=trace)
+
+        self.assertEqual(navigation, "new")
+        self.assertEqual(state, "WORKSPACE_READY")
+        self.assertTrue(new.clicked)
+        self.assertIn("validate_dom_readiness", [entry["step"] for entry in trace])
+        self.assertNotIn("empty-dom", [entry["step"] for entry in trace])
+
+    def test_workspace_hydration_waits_after_project_open_before_snapshot_failure(self):
+        browser = self._browser()
+        browser.dom_hydration_timeout_ms = 100
+        browser.workspace_hydration_timeout_ms = 100
+        browser.hydration_poll_interval_ms = 1
+        new = FakeItem(text="New project")
+        prompt = FakeItem(text="Describe your video", visible=False)
+        generate = FakeItem(text="Generate", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [new]
+        recaptcha = FakeFlowPage(title_value="")
+        recaptcha.url = "https://www.google.com/recaptcha/api2/anchor"
+        trace = []
+
+        def open_empty_workspace(timeout=None):
+            new.clicked = True
+            page.title_value = ""
+            page.buttons = []
+            page.frames = [recaptcha]
+
+        def wait_and_hydrate_workspace(_ms):
+            page.waits += 1
+            if page.waits >= 2:
+                page.title_value = "Google Flow"
+                page.buttons = [generate]
+                prompt.visible = True
+                generate.visible = True
+
+        new.click = open_empty_workspace
+        page.wait_for_timeout = wait_and_hydrate_workspace
+
+        navigation, state = browser.ensure_flow_workspace(page, trace=trace)
+
+        self.assertEqual(navigation, "new")
+        self.assertEqual(state, "WORKSPACE_READY")
+        self.assertTrue(new.clicked)
+        self.assertIn(
+            ("workspace_hydrated", "WORKSPACE_READY"),
+            [(entry["step"], entry.get("state")) for entry in trace],
+        )
 
     def test_empty_dom_state_requires_empty_title_and_zero_core_controls(self):
         browser = self._browser()

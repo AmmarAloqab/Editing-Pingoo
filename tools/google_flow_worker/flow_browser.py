@@ -130,6 +130,9 @@ CREATE_DIALOG_PATTERN = re.compile(
 class GoogleFlowBrowser:
     def __init__(self, config: FlowWorkerConfig):
         self.config = config
+        self.dom_hydration_timeout_ms = 30000
+        self.workspace_hydration_timeout_ms = 30000
+        self.hydration_poll_interval_ms = 500
         ensure_runtime_dirs(config)
 
     def _browser_executable(self) -> str:
@@ -557,6 +560,10 @@ class GoogleFlowBrowser:
             and not snapshot.get("buttons")
             and not snapshot.get("links")
             and not snapshot.get("textboxes")
+            and not snapshot.get("placeholders")
+            and not snapshot.get("aria_labels")
+            and snapshot.get("visible_input_count", 0) == 0
+            and snapshot.get("contenteditable_count", 0) == 0
         )
 
     def _recaptcha_detected(self, frame_urls: list[str]) -> bool:
@@ -578,12 +585,65 @@ class GoogleFlowBrowser:
             "error_code": "FLOW_BLOCKED_EMPTY_DOM" if state == "FLOW_BLOCKED_EMPTY_DOM" else None,
         }
 
-    def _validate_dom_readiness(self, page, trace: list[dict]) -> None:
+    def _has_workspace_hydration_signal(self, page, snapshot: dict | None = None) -> bool:
+        snapshot = snapshot or self.collect_safe_ui_snapshot(page)
+        if snapshot.get("visible_input_count", 0) > 0 or snapshot.get("contenteditable_count", 0) > 0:
+            return True
+        controls = self._snapshot_controls(snapshot)
+        if GENERATE_PATTERN.search(controls) or WORKSPACE_PATTERN.search(controls):
+            return True
+        if self.find_prompt_input(page)[0] is not None:
+            return True
+        if self.find_generate_action(page)[0] is not None:
+            return True
+        return False
+
+    def _wait_for_dom_readiness(self, page, trace: list[dict]) -> dict:
         diagnostics = self._dom_readiness_diagnostics(page)
-        trace.append({"step": "validate_dom_readiness", **diagnostics})
-        if diagnostics["state"] == "FLOW_BLOCKED_EMPTY_DOM":
-            self._record_ui_failure(page, trace, "empty-dom")
-            raise FlowBlockedEmptyDom("Flow DOM is empty; navigation blocked")
+        trace.append({"step": "workspace_hydration_start", **diagnostics})
+        attempts = max(
+            1,
+            self.dom_hydration_timeout_ms // max(1, self.hydration_poll_interval_ms),
+        )
+        for _attempt in range(attempts):
+            if diagnostics["state"] != "FLOW_BLOCKED_EMPTY_DOM":
+                trace.append({"step": "validate_dom_readiness", **diagnostics})
+                return diagnostics
+            page.wait_for_timeout(self.hydration_poll_interval_ms)
+            diagnostics = self._dom_readiness_diagnostics(page)
+        trace.append({"step": "workspace_hydration_timeout", **diagnostics})
+        self._record_ui_failure(page, trace, "empty-dom")
+        raise FlowBlockedEmptyDom("Flow DOM is empty after hydration timeout")
+
+    def _wait_for_workspace_hydration(self, page, trace: list[dict], timeout_ms: int) -> str:
+        state = self.detect_flow_state(page)
+        attempts = max(1, timeout_ms // max(1, self.hydration_poll_interval_ms))
+        for _attempt in range(attempts):
+            snapshot = self.collect_safe_ui_snapshot(page)
+            state = (
+                "FLOW_BLOCKED_EMPTY_DOM"
+                if self._is_empty_dom_snapshot(snapshot)
+                else self.detect_flow_state(page)
+            )
+            if state in {"WORKSPACE_READY", "PROJECT_WORKSPACE", "VIDEO_COMPOSER"}:
+                trace.append({"step": "workspace_hydrated", "state": "WORKSPACE_READY"})
+                return "WORKSPACE_READY"
+            if self._has_workspace_hydration_signal(page, snapshot):
+                trace.append({"step": "workspace_hydrated", "state": "WORKSPACE_READY"})
+                return "WORKSPACE_READY"
+            if state == "AUTH_REQUIRED":
+                raise FlowAuthRequired("Google Flow authenticated session required")
+            page.wait_for_timeout(self.hydration_poll_interval_ms)
+        trace.append({"step": "workspace_hydration_timeout", "state": state})
+        self._record_ui_failure(page, trace, "workspace-load")
+        if state == "FLOW_BLOCKED_EMPTY_DOM":
+            raise FlowBlockedEmptyDom("Flow workspace DOM is empty after hydration timeout")
+        raise FlowProjectNavigationFailed(
+            f"Flow workspace hydration timed out in state {state}"
+        )
+
+    def _validate_dom_readiness(self, page, trace: list[dict]) -> None:
+        self._wait_for_dom_readiness(page, trace)
 
     def _snapshot_controls(self, snapshot: dict) -> str:
         values = []
@@ -825,15 +885,15 @@ class GoogleFlowBrowser:
 
     def _wait_for_workspace_state(self, page, timeout_ms: int = 30000) -> str:
         state = self.detect_flow_state(page)
-        for _ in range(max(1, timeout_ms // 500)):
+        for _ in range(max(1, timeout_ms // self.hydration_poll_interval_ms)):
             state = self.detect_flow_state(page)
             if state in {"WORKSPACE_READY", "PROJECT_WORKSPACE", "VIDEO_COMPOSER"}:
                 return "WORKSPACE_READY"
             if state == "AUTH_REQUIRED":
                 raise FlowAuthRequired("Google Flow authenticated session required")
             if state == "FLOW_BLOCKED_EMPTY_DOM":
-                raise FlowBlockedEmptyDom("Flow DOM became empty during navigation")
-            page.wait_for_timeout(500)
+                return self._wait_for_workspace_hydration(page, [], timeout_ms)
+            page.wait_for_timeout(self.hydration_poll_interval_ms)
         raise FlowProjectNavigationFailed(
             f"Flow workspace navigation timed out in state {state}"
         )
@@ -967,7 +1027,11 @@ class GoogleFlowBrowser:
                 self._record_ui_failure(page, trace, "project-navigation")
                 raise FlowProjectNavigationChanged("Could not activate Flow project navigation") from exc
 
-        final_state = self._wait_for_workspace_state(page, timeout_ms=30000)
+        final_state = self._wait_for_workspace_hydration(
+            page,
+            trace,
+            timeout_ms=self.workspace_hydration_timeout_ms,
+        )
         trace.append({"step": "workspace_transition", "state": final_state})
         self._select_video_mode_if_needed(page)
         detected_state = self.detect_flow_state(page)
