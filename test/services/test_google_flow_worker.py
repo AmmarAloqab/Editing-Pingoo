@@ -371,7 +371,7 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(
                     browser.detect_flow_state(FakeFlowPage(buttons=[label])),
-                    "LANDING",
+                    "CREATE_PROJECT_REQUIRED",
                 )
 
     def test_empty_dom_with_recaptcha_blocks_navigation_and_returns_diagnostics(self):
@@ -450,15 +450,107 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         )
         page = FakeFlowPage(articles=[card])
 
-        self.assertEqual(browser.detect_flow_state(page), "PROJECT_LIST")
+        self.assertEqual(browser.detect_flow_state(page), "PROJECT_CARD_FOUND")
         self.assertIs(browser._find_project_card_action(page), edit)
+
+    def test_project_list_ready_does_not_assume_global_edit_is_project_card(self):
+        browser = self._browser()
+        page = FakeFlowPage(buttons=["تعديل المشروع"])
+
+        self.assertEqual(browser.detect_flow_state(page), "PROJECT_LIST_READY")
+        self.assertIsNone(browser._find_project_card_action(page))
+
+    def test_project_list_without_real_card_chooses_new_project(self):
+        browser = self._browser()
+        edit = FakeItem(text="تعديل المشروع")
+        new = FakeItem(text="مشروع جديد")
+        prompt = FakeItem(text="اكتب وصف الفيديو", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [edit, new]
+
+        def new_and_reveal(timeout=None):
+            new.clicked = True
+            prompt.visible = True
+
+        new.click = new_and_reveal
+
+        navigation = browser._ensure_prompt_workspace(page)
+
+        self.assertEqual(navigation, "new")
+        self.assertFalse(edit.clicked)
+        self.assertTrue(new.clicked)
+
+    def test_existing_project_trace_uses_explicit_navigation_states(self):
+        browser = self._browser()
+        edit = FakeItem(text="Edit project")
+        new = FakeItem(text="New project")
+        prompt = FakeItem(text="Describe your video", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [new]
+        page.articles = [
+            FakeItem(text="Existing project", children={"button": [edit]})
+        ]
+        trace = []
+
+        def edit_and_reveal(timeout=None):
+            edit.clicked = True
+            prompt.visible = True
+
+        edit.click = edit_and_reveal
+
+        navigation, state = browser.ensure_flow_workspace(page, trace=trace)
+
+        self.assertEqual(navigation, "existing")
+        self.assertEqual(state, "WORKSPACE_READY")
+        self.assertIn(
+            ("project_list_ready", "PROJECT_LIST_READY"),
+            [(item["step"], item["state"]) for item in trace],
+        )
+        self.assertIn(
+            ("project_card_found", "PROJECT_CARD_FOUND"),
+            [(item["step"], item["state"]) for item in trace],
+        )
+        self.assertIn(
+            ("workspace_ready", "WORKSPACE_READY"),
+            [(item["step"], item["state"]) for item in trace],
+        )
+        self.assertFalse(new.clicked)
+
+    def test_new_project_dialog_completes_before_workspace_wait(self):
+        browser = self._browser()
+        new = FakeItem(text="New project")
+        create = FakeItem(text="Create")
+        prompt = FakeItem(text="Describe your video", visible=False)
+        page = FakeFlowPage(inputs=[prompt])
+        page.buttons = [new]
+
+        def open_dialog(timeout=None):
+            new.clicked = True
+            page.dialogs = [FakeItem(text="Create project")]
+            page.buttons = [create]
+
+        def create_and_reveal(timeout=None):
+            create.clicked = True
+            page.dialogs = []
+            page.buttons = [FakeItem(text="Generate")]
+            prompt.visible = True
+
+        new.click = open_dialog
+        create.click = create_and_reveal
+
+        navigation, state = browser.ensure_flow_workspace(page)
+
+        self.assertEqual(navigation, "new")
+        self.assertEqual(state, "WORKSPACE_READY")
+        self.assertTrue(new.clicked)
+        self.assertTrue(create.clicked)
 
     def test_project_workspace_state_without_url_change(self):
         browser = self._browser()
         page = FakeFlowPage(buttons=["إعدادات المشروع"])
         original_url = page.url
 
-        self.assertEqual(browser.detect_flow_state(page), "PROJECT_WORKSPACE")
+        self.assertEqual(browser.detect_flow_state(page), "WORKSPACE_READY")
         self.assertEqual(page.url, original_url)
 
     def test_create_dialog_state(self):
@@ -471,7 +563,7 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         browser = self._browser()
         page = FakeFlowPage(inputs=[FakeItem(text="وصف")], buttons=["إنشاء"])
 
-        self.assertEqual(browser.detect_flow_state(page), "VIDEO_COMPOSER")
+        self.assertEqual(browser.detect_flow_state(page), "WORKSPACE_READY")
 
     def test_iframe_composer_state(self):
         browser = self._browser()
@@ -479,7 +571,7 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         frame = FakeFlowPage(inputs=[FakeItem(text="Describe")], buttons=["Generate"])
         main.frames = [frame]
 
-        self.assertEqual(browser.detect_flow_state(main), "VIDEO_COMPOSER")
+        self.assertEqual(browser.detect_flow_state(main), "WORKSPACE_READY")
 
     def test_generating_and_result_ready_states(self):
         browser = self._browser()
@@ -564,7 +656,10 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         new = FakeItem(text="مشروع جديد")
         prompt = FakeItem(text="اكتب وصف الفيديو", visible=False)
         page = FakeFlowPage(inputs=[prompt])
-        page.buttons = [edit, new]
+        page.buttons = [new]
+        page.articles = [
+            FakeItem(text="مشروع فيديو", children={"button": [edit]})
+        ]
 
         def edit_and_reveal(timeout=None):
             edit.clicked = True
@@ -844,6 +939,44 @@ class GoogleFlowWorkerUiAutomationTest(unittest.TestCase):
         self.assertTrue(result["recaptcha_detected"])
         self.assertEqual(result["state"], "FLOW_BLOCKED_EMPTY_DOM")
         self.assertEqual(result["error_code"], "FLOW_BLOCKED_EMPTY_DOM")
+
+    def test_dry_run_returns_json_error_when_project_navigation_times_out(self):
+        browser = self._browser()
+        new = FakeItem(text="New project")
+        page = FakeFlowPage()
+        page.buttons = [new]
+
+        class Context:
+            pages = [page]
+
+            def close(self):
+                pass
+
+        class Chromium:
+            def launch_persistent_context(self, **_kwargs):
+                return Context()
+
+        class Playwright:
+            chromium = Chromium()
+
+        class Manager:
+            def __enter__(self):
+                return Playwright()
+
+            def __exit__(self, *_args):
+                pass
+
+        with patch(
+            "tools.google_flow_worker.flow_browser.sync_playwright",
+            return_value=Manager(),
+        ):
+            result = browser.dry_run()
+
+        self.assertFalse(result["ready_for_generation"])
+        self.assertEqual(result["state"], "CREATE_PROJECT_REQUIRED")
+        self.assertEqual(result["error_code"], "FLOW_PROJECT_NAVIGATION_FAILED")
+        self.assertTrue(new.clicked)
+        self.assertLessEqual(page.waits, 65)
 
 class GoogleFlowWorkerWindowsTest(unittest.TestCase):
     def test_startup_script_registers_logon_restart_and_private_network_values(self):

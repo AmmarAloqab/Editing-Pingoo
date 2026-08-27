@@ -63,9 +63,13 @@ FLOW_STATES = {
     "FLOW_BLOCKED_EMPTY_DOM",
     "LANDING",
     "PROJECT_LIST",
+    "PROJECT_LIST_READY",
+    "PROJECT_CARD_FOUND",
+    "CREATE_PROJECT_REQUIRED",
     "PROJECT_WORKSPACE",
     "CREATE_DIALOG",
     "VIDEO_COMPOSER",
+    "WORKSPACE_READY",
     "GENERATING",
     "RESULT_READY",
     "UNKNOWN",
@@ -78,6 +82,15 @@ PROJECT_EXISTING_PATTERN = re.compile(
 )
 PROJECT_NEW_PATTERN = re.compile(
     r"new project|create project|مشروع جديد|إنشاء مشروع|انشاء مشروع",
+    re.I,
+)
+PROJECT_LIST_PATTERN = re.compile(
+    r"projects|my projects|edit project|delete project|"
+    r"المشاريع|مشروعاتي|تعديل المشروع|حذف المشروع",
+    re.I,
+)
+PROJECT_CREATE_CONFIRM_PATTERN = re.compile(
+    r"^create$|create project|^إنشاء$|^انشاء$|إنشاء مشروع|انشاء مشروع",
     re.I,
 )
 LANDING_START_PATTERN = re.compile(
@@ -521,17 +534,19 @@ class GoogleFlowBrowser:
         if GENERATING_PATTERN.search(controls):
             return "GENERATING"
         if prompt is not None and generate is not None:
-            return "VIDEO_COMPOSER"
+            return "WORKSPACE_READY"
         if snapshot.get("role_names", {}).get("dialog") and CREATE_DIALOG_PATTERN.search(controls):
             return "CREATE_DIALOG"
         if named_prompt is not None:
-            return "PROJECT_WORKSPACE"
-        if PROJECT_EXISTING_PATTERN.search(controls) or self._has_project_cards(page):
-            return "PROJECT_LIST"
+            return "WORKSPACE_READY"
+        if self._has_project_cards(page):
+            return "PROJECT_CARD_FOUND"
         if prompt is not None or WORKSPACE_PATTERN.search(controls) or self._find_named_action(page, VIDEO_MODE_PATTERN)[0] is not None:
-            return "PROJECT_WORKSPACE"
+            return "WORKSPACE_READY"
         if PROJECT_NEW_PATTERN.search(controls):
-            return "LANDING"
+            return "CREATE_PROJECT_REQUIRED"
+        if PROJECT_LIST_PATTERN.search(controls):
+            return "PROJECT_LIST_READY"
         if LANDING_START_PATTERN.search(controls):
             return "LANDING"
         return "UNKNOWN"
@@ -785,9 +800,6 @@ class GoogleFlowBrowser:
         return self._find_project_card_action(page) is not None
 
     def _find_project_card_action(self, page):
-        action, _frame = self._find_named_action(page, PROJECT_EXISTING_PATTERN)
-        if action is not None:
-            return action
         for frame in self._candidate_frames(page):
             for role in ("article", "listitem", "group"):
                 try:
@@ -815,12 +827,16 @@ class GoogleFlowBrowser:
         state = self.detect_flow_state(page)
         for _ in range(max(1, timeout_ms // 500)):
             state = self.detect_flow_state(page)
-            if state in {"PROJECT_WORKSPACE", "VIDEO_COMPOSER"}:
-                return state
+            if state in {"WORKSPACE_READY", "PROJECT_WORKSPACE", "VIDEO_COMPOSER"}:
+                return "WORKSPACE_READY"
             if state == "AUTH_REQUIRED":
                 raise FlowAuthRequired("Google Flow authenticated session required")
+            if state == "FLOW_BLOCKED_EMPTY_DOM":
+                raise FlowBlockedEmptyDom("Flow DOM became empty during navigation")
             page.wait_for_timeout(500)
-        return state
+        raise FlowProjectNavigationFailed(
+            f"Flow workspace navigation timed out in state {state}"
+        )
 
     def _open_existing_project(self, page) -> bool:
         action = self._find_project_card_action(page)
@@ -834,6 +850,18 @@ class GoogleFlowBrowser:
 
     def _open_new_project(self, page) -> bool:
         action, _frame = self._find_named_action(page, PROJECT_NEW_PATTERN)
+        if action is None:
+            return False
+        try:
+            action.click(timeout=5000)
+            return True
+        except Exception:
+            return False
+
+    def _complete_create_dialog(self, page) -> bool:
+        if self.detect_flow_state(page) != "CREATE_DIALOG":
+            return True
+        action, _frame = self._find_named_action(page, PROJECT_CREATE_CONFIRM_PATTERN)
         if action is None:
             return False
         try:
@@ -864,23 +892,69 @@ class GoogleFlowBrowser:
         trace.append({"step": "detect_initial_state", "state": state})
         if state == "AUTH_REQUIRED":
             raise FlowAuthRequired("Google Flow authenticated session required")
-        if state in {"VIDEO_COMPOSER", "PROJECT_WORKSPACE"}:
+        if state in {"WORKSPACE_READY", "VIDEO_COMPOSER", "PROJECT_WORKSPACE"}:
             self._select_video_mode_if_needed(page)
             final_state = self.detect_flow_state(page)
-            trace.append({"step": "workspace_ready", "state": final_state})
-            return "not_needed", final_state
+            trace.append({"step": "workspace_ready", "state": "WORKSPACE_READY"})
+            return "not_needed", "WORKSPACE_READY"
 
-        if state not in {"LANDING", "PROJECT_LIST", "CREATE_DIALOG", "UNKNOWN"}:
+        if state not in {
+            "LANDING",
+            "PROJECT_LIST",
+            "PROJECT_LIST_READY",
+            "PROJECT_CARD_FOUND",
+            "CREATE_PROJECT_REQUIRED",
+            "CREATE_DIALOG",
+            "UNKNOWN",
+        }:
             raise FlowProjectNavigationChanged("Unsupported Flow project state")
 
         navigation = "not_needed"
-        if self._open_existing_project(page):
+        project_action = self._find_project_card_action(page)
+        new_project_action, _frame = self._find_named_action(page, PROJECT_NEW_PATTERN)
+        trace.append({"step": "project_list_ready", "state": "PROJECT_LIST_READY"})
+
+        if project_action is not None:
+            trace.append({"step": "project_card_found", "state": "PROJECT_CARD_FOUND"})
+            try:
+                project_action.click(timeout=5000)
+            except Exception as exc:
+                self._record_ui_failure(page, trace, "project-navigation")
+                raise FlowProjectNavigationFailed(
+                    "Could not open existing Flow project card"
+                ) from exc
             navigation = "existing"
             trace.append({"step": "open_existing_project", "state": state})
-        elif self._open_new_project(page):
+        elif new_project_action is not None:
+            trace.append(
+                {"step": "create_project_required", "state": "CREATE_PROJECT_REQUIRED"}
+            )
+            try:
+                new_project_action.click(timeout=5000)
+            except Exception as exc:
+                self._record_ui_failure(page, trace, "project-navigation")
+                raise FlowProjectNavigationFailed(
+                    "Could not open Flow new project action"
+                ) from exc
             navigation = "new"
             trace.append({"step": "open_new_project", "state": state})
+            page.wait_for_timeout(500)
+            if not self._complete_create_dialog(page):
+                self._record_ui_failure(page, trace, "project-navigation")
+                raise FlowProjectNavigationFailed(
+                    "Could not complete Flow create project dialog"
+                )
         else:
+            if state in {
+                "PROJECT_LIST",
+                "PROJECT_LIST_READY",
+                "PROJECT_CARD_FOUND",
+                "CREATE_PROJECT_REQUIRED",
+            }:
+                self._record_ui_failure(page, trace, "project-navigation")
+                raise FlowProjectNavigationChanged(
+                    "Flow project list has no real project card or new project action"
+                )
             landing_action, _frame = self._find_named_action(page, LANDING_START_PATTERN)
             if landing_action is None:
                 self._record_ui_failure(page, trace, "project-navigation")
@@ -895,13 +969,11 @@ class GoogleFlowBrowser:
 
         final_state = self._wait_for_workspace_state(page, timeout_ms=30000)
         trace.append({"step": "workspace_transition", "state": final_state})
-        if final_state not in {"PROJECT_WORKSPACE", "VIDEO_COMPOSER"}:
-            self._record_ui_failure(page, trace, "workspace-load")
-            raise FlowProjectNavigationFailed("Flow project navigation did not reach workspace")
         self._select_video_mode_if_needed(page)
-        final_state = self.detect_flow_state(page)
-        trace.append({"step": "detect_composer", "state": final_state})
-        return navigation, final_state
+        detected_state = self.detect_flow_state(page)
+        trace.append({"step": "detect_composer", "state": detected_state})
+        trace.append({"step": "workspace_ready", "state": "WORKSPACE_READY"})
+        return navigation, "WORKSPACE_READY"
 
     def _ensure_prompt_workspace(self, page) -> str:
         navigation, _state = self.ensure_flow_workspace(page)
